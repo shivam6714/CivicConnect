@@ -22,7 +22,6 @@ The platform focuses on location-aware grievance reporting, interactive maps, st
 - [Current Status](#-current-status)
 - [Future Enhancements](#-future-enhancements)
 - [Contributing](#-contributing)
-- [License](#-license)
 
 ## 🌐 Overview
 
