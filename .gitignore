@@ -1,7 +1,15 @@
-@'
 # Dependencies
 node_modules/
 **/node_modules/
+
+# Python cache & virtualenvs
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
 
 # Build output
 dist/
@@ -22,4 +30,4 @@ pnpm-debug.log*
 
 # Editor settings
 .vscode/
-'@ | Set-Content .gitignore
+.idea/
