@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types/user';
-import { mockAuthService, OtpRequestResult } from '../services/mockAuthService';
+import { authService, RequestOtpResponse } from '../services/authService';
 import { DEMO_ADMIN_ACCOUNTS, DEMO_CITIZEN_ACCOUNT } from '../data/mockUsers';
+
+export interface OtpRequestResult extends RequestOtpResponse {}
 
 interface AuthContextType {
   user: User | null;
@@ -9,7 +11,12 @@ interface AuthContextType {
   isLoading: boolean;
   loginAdmin: (adminId: string, password: string) => Promise<User>;
   requestCitizenOtp: (phone: string) => Promise<OtpRequestResult>;
-  verifyCitizenOtp: (phone: string, otp: string) => Promise<User>;
+  verifyCitizenOtp: (
+    phone: string,
+    otp: string,
+    fullName?: string,
+    wardNumber?: number
+  ) => Promise<User>;
   logout: () => Promise<void>;
   switchDevRole: (roleKey: 'city_admin' | 'citizen') => void;
   isCityAdmin: boolean;
@@ -23,16 +30,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Restore session on mount if one exists
-    const activeUser = mockAuthService.getCurrentUser();
-    setUser(activeUser);
-    setIsLoading(false);
+    // Restore session on mount if a valid session exists
+    try {
+      const activeUser = authService.getCurrentUser();
+      setUser(activeUser);
+    } catch (err) {
+      console.warn('Failed to restore user session:', err);
+      setUser(null);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   const loginAdmin = async (adminId: string, password: string): Promise<User> => {
     setIsLoading(true);
     try {
-      const authenticatedUser = await mockAuthService.adminLogin(adminId, password);
+      const authenticatedUser = await authService.adminLogin(adminId, password);
       setUser(authenticatedUser);
       return authenticatedUser;
     } finally {
@@ -41,15 +54,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const requestCitizenOtp = async (phone: string): Promise<OtpRequestResult> => {
-    return await mockAuthService.requestCitizenOtp(phone);
+    return await authService.requestOtp(phone);
   };
 
-  const verifyCitizenOtp = async (phone: string, otp: string): Promise<User> => {
+  const verifyCitizenOtp = async (
+    phone: string,
+    otp: string,
+    fullName?: string,
+    wardNumber?: number
+  ): Promise<User> => {
     setIsLoading(true);
     try {
-      const authenticatedUser = await mockAuthService.verifyCitizenOtp(phone, otp);
-      setUser(authenticatedUser);
-      return authenticatedUser;
+      const result = await authService.verifyOtp({
+        phoneNumber: phone,
+        otp,
+        fullName,
+        wardNumber,
+      });
+      setUser(result.user);
+      return result.user;
     } finally {
       setIsLoading(false);
     }
@@ -58,7 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     setIsLoading(true);
     try {
-      await mockAuthService.logout();
+      await authService.logout();
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -72,12 +95,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       targetUser = DEMO_CITIZEN_ACCOUNT.user;
     }
-    mockAuthService.setDemoSession(targetUser);
+    authService.setDemoSession(targetUser);
     setUser({ ...targetUser });
   };
 
-  const isCityAdmin = user?.role === 'CITY_ADMIN';
-  const isCitizen = user?.role === 'CITIZEN';
+  const isCityAdmin = user?.role === 'CITY_ADMIN' || user?.role === 'admin';
+  const isCitizen = user?.role === 'CITIZEN' || user?.role === 'citizen';
 
   return (
     <AuthContext.Provider

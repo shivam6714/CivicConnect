@@ -1,161 +1,226 @@
-﻿/**
+/**
  * CivicConnect Authentication Service
  *
- * NOTE FOR BACKEND DEVELOPER:
- * This service implements the provisional frontend contract for authentication.
- * Production credential verification, hash comparisons, JWT issuing, role permissions,
- * and ward boundary access-controls must be enforced by the FastAPI backend on every endpoint.
+ * Implements real backend OTP authentication integration:
+ * - POST /api/auth/request-otp
+ * - POST /api/auth/verify-otp
  *
- * In development mode (USE_MOCK_DATA = true), an isolated fixture layer simulates
- * authenticated session states for evaluation and UI testing.
+ * Security & Token Storage Architecture:
+ * - JWT verification tokens are securely stored in browser localStorage under 'civic_auth_token'.
+ *   This enables the apiClient to automatically attach 'Authorization: Bearer <token>' to subsequent
+ *   authenticated API requests across route transitions and page refreshes.
+ * - Security Trade-off Documentation: Storing JWT in localStorage is subject to XSS exposure
+ *   if unmitigated malicious scripts run in the origin. Because the current backend returns the JWT
+ *   in the response body rather than an HttpOnly cookie, localStorage is the required storage mechanism.
+ *   Mitigations: Tokens are never logged to console, never displayed in UI templates, and are
+ *   cleared immediately on logout.
+ * - User session profiles are stored in sessionStorage ('civicconnect_auth_session').
+ * - Logout explicitly clears both client-side token and session state.
  */
 
 import { User } from '../types/user';
-import { apiClient } from './apiClient';
+import { apiClient, TOKEN_STORAGE_KEY } from './apiClient';
+import { mockAuthService } from './mockAuthService';
 
-const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA !== 'false';
-const SESSION_STORAGE_KEY = 'civicconnect_auth_session';
+export const SESSION_STORAGE_KEY = 'civicconnect_auth_session';
 
-export interface LoginCredentials {
-  identifier: string; // Email or username
-  password: string;
-  rememberMe?: boolean;
+export const INDIAN_MOBILE_REGEX = /^(?:\+91|91|0)?[6-9]\d{9}$/;
+
+export function isValidIndianMobile(phone: string): boolean {
+  if (!phone || typeof phone !== 'string') return false;
+  const cleaned = phone.replace(/[\s\-()]/g, '');
+  return INDIAN_MOBILE_REGEX.test(cleaned);
 }
 
-export interface AuthResponse {
+export function extractTenDigitMobile(phone: string): string {
+  const digitsOnly = phone.replace(/\D/g, '');
+  return digitsOnly.slice(-10);
+}
+
+export interface RequestOtpPayload {
+  phoneNumber: string;
+}
+
+export interface RequestOtpResponse {
+  success: boolean;
+  message: string;
+  cooldownSeconds: number;
+}
+
+export interface VerifyOtpPayload {
+  phoneNumber: string;
+  otp: string;
+  fullName?: string;
+  wardNumber?: number;
+}
+
+export interface BackendCitizenUser {
+  id: string;
+  phoneNumber: string;
+  fullName?: string;
+  wardNumber?: number;
+  role: 'citizen' | 'official' | 'admin';
+  isPhoneVerified: boolean;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+}
+
+export interface VerifyOtpResponse {
+  success: boolean;
+  message: string;
+  token: string;
+  user: BackendCitizenUser;
+}
+
+export interface VerifyResult {
   user: User;
-  token?: string;
-  message?: string;
+  token: string;
+  message: string;
 }
 
-// Development-only demo fixtures for project demonstration & role testing
-export const DEV_DEMO_USERS: Record<string, { user: User; label: string; roleDesc: string }> = {
-  city_admin: {
-    label: 'City Administrator',
-    roleDesc: 'City-wide oversight, all 75 wards, centralized municipal portal',
-    user: {
-      id: 'usr-admin-01',
-      name: 'Er. Rajesh Khajuria',
-      email: 'admin@jmc.jk.gov.in',
-      phone: '+91 94191 00001',
-      role: 'CITY_ADMIN',
-      department: 'Municipal Commissioner Secretariat',
-    },
-  },
-  citizen: {
-    label: 'Citizen / Complainant',
-    roleDesc: 'Track personal submissions, resolution proofs, file grievances',
-    user: {
-      id: 'usr-citizen-01',
-      name: 'Anil Sharma',
-      email: 'citizen@jammu.in',
-      phone: '+91 94192 12345',
-      role: 'CITIZEN',
-    },
-  },
-};
+/**
+ * Maps the backend's CitizenUser entity to the frontend User interface.
+ */
+export function mapBackendCitizenToUser(citizenUser: BackendCitizenUser): User {
+  return {
+    id: citizenUser.id,
+    name: citizenUser.fullName?.trim() || `Citizen (${citizenUser.phoneNumber})`,
+    email: `${citizenUser.phoneNumber.replace('+', '')}@citizen.civicconnect.in`,
+    phone: citizenUser.phoneNumber,
+    phoneNumber: citizenUser.phoneNumber,
+    role: 'CITIZEN',
+    wardAssigned: citizenUser.wardNumber,
+    wardNumber: citizenUser.wardNumber,
+    isPhoneVerified: citizenUser.isPhoneVerified,
+  };
+}
 
 export const authService = {
   /**
-   * Provisional login implementation
-   * Connects to POST /api/auth/login or falls back to development demo users
+   * Request a 6-digit OTP code from backend via POST /api/auth/request-otp
    */
-  async login(credentials: LoginCredentials): Promise<AuthResponse> {
-    const trimmedId = credentials.identifier.trim().toLowerCase();
-
-    if (!USE_MOCK_DATA) {
-      try {
-        const response = await apiClient<AuthResponse>('/api/auth/login', {
-          method: 'POST',
-          body: JSON.stringify({
-            username: trimmedId,
-            password: credentials.password,
-          }),
-        });
-        if (response.user) {
-          sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(response.user));
-        }
-        return response;
-      } catch (err: unknown) {
-        const error = err as Error;
-        throw new Error(error.message || 'Authentication failed. Please verify credentials.');
-      }
+  async requestOtp(phoneNumber: string): Promise<RequestOtpResponse> {
+    const tenDigits = extractTenDigitMobile(phoneNumber);
+    if (!tenDigits || tenDigits.length !== 10) {
+      throw new Error('Please provide a valid 10-digit Indian mobile number.');
     }
 
-    // Development Mock Mode Authentication
-    // Simulates server-side verification without hardcoded production secrets
-    await new Promise((resolve) => setTimeout(resolve, 600)); // Network latency simulation
-
-    let matchedUser: User | undefined;
-
-    if (trimmedId === 'admin@jmc.jk.gov.in' || trimmedId === 'admin' || trimmedId.includes('admin')) {
-      matchedUser = DEV_DEMO_USERS.city_admin.user;
-    } else if (trimmedId === 'citizen@jammu.in' || trimmedId === 'citizen') {
-      matchedUser = DEV_DEMO_USERS.citizen.user;
-    } else {
-      // Check if user entered an email with admin keyword
-      if (trimmedId.includes('admin')) {
-        matchedUser = DEV_DEMO_USERS.city_admin.user;
-      } else {
-        matchedUser = {
-          id: `usr-demo-${Date.now()}`,
-          name: trimmedId.split('@')[0],
-          email: trimmedId,
-          role: 'CITIZEN',
-        };
-      }
-    }
-
-    if (!credentials.password || credentials.password.length < 4) {
-      throw new Error('Please enter a valid password (minimum 4 characters).');
-    }
-
-    // Store authenticated user session (never passwords)
-    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(matchedUser));
+    const response = await apiClient<RequestOtpResponse>('/api/auth/request-otp', {
+      method: 'POST',
+      body: JSON.stringify({ phoneNumber: tenDigits }),
+    });
 
     return {
-      user: matchedUser,
-      token: 'demo-jwt-token-for-dev-session',
-      message: 'Logged in successfully (Development Mode)',
+      success: response.success,
+      message: response.message,
+      cooldownSeconds: response.cooldownSeconds || 60,
     };
   },
 
   /**
-   * Retrieve current active user session
+   * Verify 6-digit OTP code via POST /api/auth/verify-otp
    */
-  getCurrentUser(): User | null {
-    try {
-      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
-      if (raw) {
-        return JSON.parse(raw);
-      }
-    } catch {
-      // Ignore parse failure
+  async verifyOtp(payload: VerifyOtpPayload): Promise<VerifyResult> {
+    const tenDigits = extractTenDigitMobile(payload.phoneNumber);
+    const cleanOtp = payload.otp.trim();
+
+    if (!tenDigits || tenDigits.length !== 10) {
+      throw new Error('Please provide a valid 10-digit Indian mobile number.');
     }
-    // Default initial development user is City Admin so reviewers immediately see full system
-    return DEV_DEMO_USERS.city_admin.user;
+
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      throw new Error('Verification code must be exactly 6 digits.');
+    }
+
+    const requestBody: Record<string, unknown> = {
+      phoneNumber: tenDigits,
+      otp: cleanOtp,
+    };
+
+    if (payload.fullName && payload.fullName.trim().length >= 2) {
+      requestBody.fullName = payload.fullName.trim();
+    }
+
+    if (typeof payload.wardNumber === 'number' && payload.wardNumber >= 1 && payload.wardNumber <= 75) {
+      requestBody.wardNumber = payload.wardNumber;
+    }
+
+    const response = await apiClient<VerifyOtpResponse>('/api/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.token || !response.user) {
+      throw new Error('Invalid response format received from verification server.');
+    }
+
+    // Persist JWT token in localStorage for apiClient requests
+    localStorage.setItem(TOKEN_STORAGE_KEY, response.token);
+
+    // Map and persist active session
+    const frontendUser = mapBackendCitizenToUser(response.user);
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(frontendUser));
+
+    return {
+      user: frontendUser,
+      token: response.token,
+      message: response.message,
+    };
   },
 
   /**
-   * Switch development demo user directly for fast reviewer testing
+   * Delegate admin login to mockAuthService or dedicated admin endpoint
    */
-  switchDevUser(key: keyof typeof DEV_DEMO_USERS): User {
-    const user = DEV_DEMO_USERS[key].user;
+  async adminLogin(adminId: string, password: string): Promise<User> {
+    const user = await mockAuthService.adminLogin(adminId, password);
     sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
     return user;
   },
 
   /**
-   * Log out current user
+   * Retrieve current authenticated user from storage
+   */
+  getCurrentUser(): User | null {
+    try {
+      const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (!raw) return null;
+      const user = JSON.parse(raw) as User;
+
+      // If user is a citizen, ensure their authentication token is present
+      if (user.role === 'CITIZEN') {
+        const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+        if (!token) {
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          return null;
+        }
+      }
+
+      return user;
+    } catch {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+  },
+
+  /**
+   * Get currently active JWT token
+   */
+  getToken(): string | null {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  },
+
+  /**
+   * Sets demo session directly (used for quick role toggle in dev UI)
+   */
+  setDemoSession(user: User): void {
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
+  },
+
+  /**
+   * Clear all client-side authentication states on logout
    */
   async logout(): Promise<void> {
-    if (!USE_MOCK_DATA) {
-      try {
-        await apiClient('/api/auth/logout', { method: 'POST' });
-      } catch {
-        // Continue clearing client session
-      }
-    }
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     sessionStorage.removeItem(SESSION_STORAGE_KEY);
   },
 };
