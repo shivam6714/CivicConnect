@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   Users,
@@ -7,93 +7,201 @@ import {
   ArrowRight,
   AlertCircle,
   RotateCcw,
-  Sparkles,
   ShieldCheck,
-  KeyRound,
   CheckCircle2,
+  Edit2,
+  Terminal,
+  User,
+  Building,
+  Info,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { DEMO_CITIZEN_ACCOUNT } from '../data/mockUsers';
+import { isValidIndianMobile, extractTenDigitMobile } from '../services/authService';
+import { JAMMU_WARDS } from '../data/jammuWards';
+
+type AuthStep = 'PHONE' | 'OTP';
 
 export const CitizenLoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { requestCitizenOtp, verifyCitizenOtp, isLoading } = useAuth();
+  const { requestCitizenOtp, verifyCitizenOtp } = useAuth();
 
-  // Initialized with mock citizen credentials for seamless testing
-  const [countryCode, setCountryCode] = useState('+91');
-  const [mobileNumber, setMobileNumber] = useState(DEMO_CITIZEN_ACCOUNT.phone);
-  const [otp, setOtp] = useState(DEMO_CITIZEN_ACCOUNT.demoOtp);
+  // Current step in authentication flow
+  const [step, setStep] = useState<AuthStep>('PHONE');
 
-  // Flow states
-  const [otpSent, setOtpSent] = useState(true);
-  const [isSendingOtp, setIsSendingOtp] = useState(false);
-  const [otpMessage, setOtpMessage] = useState<string | null>(
-    `Prototype mock session active. Verification OTP preloaded (${DEMO_CITIZEN_ACCOUNT.demoOtp}).`
-  );
+  // Input fields
+  const [countryCode] = useState('+91');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [wardNumber, setWardNumber] = useState<number | ''>('');
+  const [otp, setOtp] = useState('');
+
+  // Expandable profile fields in Step A
+  const [showOptionalProfile, setShowOptionalProfile] = useState(false);
+
+  // Flow & Submission States
+  const [isRequestingOtp, setIsRequestingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  // Status & Error Feedback
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const handleFillDemoCitizen = () => {
-    setMobileNumber(DEMO_CITIZEN_ACCOUNT.phone);
-    setOtp(DEMO_CITIZEN_ACCOUNT.demoOtp);
-    setOtpSent(true);
-    setOtpMessage(`Mock OTP auto-loaded (${DEMO_CITIZEN_ACCOUNT.demoOtp}) for Anil Sharma.`);
+  // Field validation error states
+  const [phoneTouched, setPhoneTouched] = useState(false);
+
+  // Refs
+  const otpInputRef = useRef<HTMLInputElement>(null);
+  const phoneInputRef = useRef<HTMLInputElement>(null);
+
+  // Cooldown countdown timer effect
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
+  // Auto-focus OTP input when advancing to Step B
+  useEffect(() => {
+    if (step === 'OTP') {
+      setTimeout(() => {
+        otpInputRef.current?.focus();
+      }, 100);
+    }
+  }, [step]);
+
+  // Derived validation
+  const cleanPhone = extractTenDigitMobile(mobileNumber);
+  const isPhoneValid = isValidIndianMobile(mobileNumber) && cleanPhone.length === 10;
+  const isOtpValid = /^\d{6}$/.test(otp.trim());
+
+  // Fill quick demo number for developer convenience
+  const handleFillDemoNumber = (number: string) => {
+    setMobileNumber(number);
+    setPhoneTouched(true);
     setErrorMessage(null);
   };
 
-  const handleSendOtp = async () => {
+  // STEP A: Request OTP
+  const handleRequestOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setErrorMessage(null);
-    setOtpMessage(null);
+    setStatusMessage(null);
+    setPhoneTouched(true);
 
-    const clean = mobileNumber.replace(/\D/g, '');
-    if (clean.length < 10) {
-      setErrorMessage('Please enter a valid 10-digit mobile number.');
+    if (!isPhoneValid) {
+      setErrorMessage(
+        'Please enter a valid 10-digit Indian mobile number (starting with 6, 7, 8, or 9).'
+      );
+      phoneInputRef.current?.focus();
       return;
     }
 
-    setIsSendingOtp(true);
+    if (cooldown > 0) {
+      setErrorMessage(`Please wait ${cooldown} seconds before requesting a new OTP code.`);
+      return;
+    }
+
+    setIsRequestingOtp(true);
     try {
-      await requestCitizenOtp(clean);
-      setOtpSent(true);
-      setOtp(DEMO_CITIZEN_ACCOUNT.demoOtp);
-      setOtpMessage(
-        `A 6-digit verification code has been dispatched to ${countryCode} ${clean} (Prototype OTP: ${DEMO_CITIZEN_ACCOUNT.demoOtp}).`
+      const response = await requestCitizenOtp(cleanPhone);
+      setStep('OTP');
+      setCooldown(response.cooldownSeconds || 60);
+      setStatusMessage(
+        response.message || 'A 6-digit verification code has been generated.'
       );
     } catch (err: unknown) {
-      const error = err as Error;
-      setErrorMessage(error.message || 'Failed to dispatch OTP.');
+      const error = err as Error & { details?: { retryAfter?: number } };
+      setErrorMessage(error.message || 'Failed to request verification code. Please try again.');
+      if (error.details?.retryAfter) {
+        setCooldown(error.details.retryAfter);
+      }
     } finally {
-      setIsSendingOtp(false);
+      setIsRequestingOtp(false);
     }
   };
 
+  // Resend OTP in Step B
+  const handleResendOtp = async () => {
+    if (cooldown > 0 || isRequestingOtp) return;
+    setErrorMessage(null);
+    setStatusMessage(null);
+    setIsRequestingOtp(true);
+    try {
+      const response = await requestCitizenOtp(cleanPhone);
+      setCooldown(response.cooldownSeconds || 60);
+      setOtp('');
+      setStatusMessage(response.message || 'A new verification code has been generated.');
+      otpInputRef.current?.focus();
+    } catch (err: unknown) {
+      const error = err as Error & { details?: { retryAfter?: number } };
+      setErrorMessage(error.message || 'Failed to resend code.');
+      if (error.details?.retryAfter) {
+        setCooldown(error.details.retryAfter);
+      }
+    } finally {
+      setIsRequestingOtp(false);
+    }
+  };
+
+  // STEP B: Verify OTP
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
-    const clean = mobileNumber.replace(/\D/g, '');
-    if (clean.length < 10) {
-      setErrorMessage('Please enter your 10-digit mobile number.');
+    const cleanCode = otp.replace(/\D/g, '').trim();
+
+    if (!cleanCode || cleanCode.length !== 6) {
+      setErrorMessage('Please enter the full 6-digit verification code.');
+      otpInputRef.current?.focus();
       return;
     }
 
-    if (!otp.trim()) {
-      setErrorMessage('Please enter the 6-digit OTP code received on your mobile.');
-      return;
-    }
-
+    setIsVerifyingOtp(true);
     try {
-      await verifyCitizenOtp(clean, otp.trim());
+      await verifyCitizenOtp(
+        cleanPhone,
+        cleanCode,
+        fullName.trim() || undefined,
+        typeof wardNumber === 'number' ? wardNumber : undefined
+      );
+
+      // Navigate directly to citizen portal dashboard upon verification
       navigate('/citizen', { replace: true });
     } catch (err: unknown) {
       const error = err as Error;
-      setErrorMessage(error.message || 'Verification failed. Please check the code and try again.');
+      setErrorMessage(
+        error.message || 'Invalid or expired verification code. Please check the code and try again.'
+      );
+      otpInputRef.current?.select();
+    } finally {
+      setIsVerifyingOtp(false);
     }
+  };
+
+  // Return to Step A
+  const handleReturnToPhone = () => {
+    setStep('PHONE');
+    setOtp('');
+    setErrorMessage(null);
+    setStatusMessage(null);
+    setTimeout(() => {
+      phoneInputRef.current?.focus();
+    }, 100);
   };
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex flex-col justify-center py-8 sm:py-12 px-4 sm:px-6 lg:px-8 bg-civic-bg">
       <div className="w-full max-w-md mx-auto">
-        {/* Back Button */}
+        {/* Navigation & Header */}
         <Link
           to="/"
           className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-civic-secondary hover:text-navy-900 transition-colors mb-6 group min-h-[44px]"
@@ -102,7 +210,7 @@ export const CitizenLoginPage: React.FC = () => {
           <span>Back to Home</span>
         </Link>
 
-        {/* Header & Wordmark */}
+        {/* Civic Wordmark & Title */}
         <div className="text-center">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-teal-50 text-teal-600 font-extrabold text-xl shadow-subtle mb-3 border border-teal-100">
             <Users className="w-6 h-6" />
@@ -115,48 +223,63 @@ export const CitizenLoginPage: React.FC = () => {
             Citizen Sign In
           </h1>
           <p className="mt-1.5 text-xs sm:text-sm text-civic-secondary leading-relaxed">
-            Log in via Mobile OTP to file civic grievances and track resolution status.
+            {step === 'PHONE'
+              ? 'Enter your mobile number to receive a secure One-Time Password (OTP).'
+              : 'Enter the 6-digit verification code to complete sign in.'}
           </p>
         </div>
 
-        {/* Mock Citizen Credentials Helper Panel */}
-        <div className="mt-6 p-4 rounded-2xl bg-gradient-to-br from-teal-900 to-navy-900 text-white shadow-card border border-teal-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-teal-300">
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>Mock Citizen Login Data</span>
-            </div>
-            <span className="text-[10px] font-mono bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded">
-              Prototype Mode
+        {/* Step Progress Indicators */}
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                step === 'PHONE'
+                  ? 'bg-teal-500 text-white shadow-xs'
+                  : 'bg-teal-100 text-teal-700'
+              }`}
+            >
+              1
+            </span>
+            <span
+              className={`text-xs font-semibold ${
+                step === 'PHONE' ? 'text-navy-900' : 'text-gray-400'
+              }`}
+            >
+              Mobile Number
             </span>
           </div>
 
-          <p className="text-[11px] text-teal-100 leading-relaxed">
-            FastAPI backend & SMS gateway in progress. Click to load verified mock citizen credentials:
-          </p>
+          <div className="w-8 h-0.5 bg-gray-200" />
 
-          <button
-            type="button"
-            onClick={handleFillDemoCitizen}
-            className="w-full p-2.5 rounded-xl border border-teal-500/40 bg-white/10 hover:bg-white/15 text-left transition-all flex items-center justify-between"
-          >
-            <div>
-              <span className="text-xs font-bold text-white block">Citizen: {DEMO_CITIZEN_ACCOUNT.user.name}</span>
-              <span className="font-mono text-[11px] text-teal-200 mt-0.5 block">
-                Mobile: +91 {DEMO_CITIZEN_ACCOUNT.phone} &bull; OTP: {DEMO_CITIZEN_ACCOUNT.demoOtp}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-300 bg-teal-500/20 px-2.5 py-1 rounded-lg border border-teal-400/30">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Auto-Fill</span>
-            </div>
-          </button>
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                step === 'OTP'
+                  ? 'bg-teal-500 text-white shadow-xs'
+                  : 'bg-gray-100 text-gray-400'
+              }`}
+            >
+              2
+            </span>
+            <span
+              className={`text-xs font-semibold ${
+                step === 'OTP' ? 'text-navy-900' : 'text-gray-400'
+              }`}
+            >
+              Verify OTP
+            </span>
+          </div>
         </div>
 
-        {/* Form Card */}
-        <div className="mt-4 bg-white py-6 sm:py-8 px-5 sm:px-8 shadow-subtle rounded-2xl border border-civic-border">
+        {/* Main Authentication Card */}
+        <div className="mt-6 bg-white py-6 sm:py-8 px-5 sm:px-8 shadow-subtle rounded-2xl border border-civic-border">
+          {/* Error Message Alert */}
           {errorMessage && (
-            <div className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn">
+            <div
+              role="alert"
+              className="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn"
+            >
               <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500 mt-0.5" />
               <div>
                 <p className="font-semibold">Authentication Error</p>
@@ -165,115 +288,296 @@ export const CitizenLoginPage: React.FC = () => {
             </div>
           )}
 
-          {otpMessage && !errorMessage && (
-            <div className="mb-5 p-3.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn">
-              <Sparkles className="w-4 h-4 flex-shrink-0 text-teal-600 mt-0.5" />
+          {/* Status / Success Message Alert */}
+          {statusMessage && !errorMessage && (
+            <div
+              role="status"
+              className="mb-5 p-3.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 text-xs sm:text-sm flex items-start gap-2.5 animate-fadeIn"
+            >
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-teal-600 mt-0.5" />
               <div>
-                <p className="font-semibold">Mock OTP Active</p>
-                <p className="mt-0.5 text-teal-800 leading-normal">{otpMessage}</p>
+                <p className="font-semibold">Request Processed</p>
+                <p className="mt-0.5 text-teal-800 leading-normal">{statusMessage}</p>
               </div>
             </div>
           )}
 
-          <form onSubmit={handleVerify} className="space-y-4" noValidate>
-            {/* Mobile Number with Country Code */}
-            <div>
-              <label
-                htmlFor="mobileNumber"
-                className="block text-xs font-semibold text-navy-900 uppercase tracking-wider mb-1.5"
-              >
-                Registered Mobile Number
-              </label>
-              <div className="flex gap-2">
-                <select
-                  value={countryCode}
-                  onChange={(e) => setCountryCode(e.target.value)}
-                  className="w-24 text-xs sm:text-sm py-2.5 px-2 bg-gray-50 border border-civic-border rounded-lg text-navy-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 font-medium min-h-[44px]"
+          {/* STEP A: MOBILE NUMBER ENTRY */}
+          {step === 'PHONE' && (
+            <form onSubmit={handleRequestOtp} className="space-y-4" noValidate>
+              <div>
+                <label
+                  htmlFor="citizenMobile"
+                  className="block text-xs font-semibold text-navy-900 uppercase tracking-wider mb-1.5"
                 >
-                  <option value="+91">🇮🇳 +91</option>
-                  <option value="+1">🇺🇸 +1</option>
-                  <option value="+44">🇬🇧 +44</option>
-                </select>
-
-                <div className="relative flex-1 rounded-lg shadow-2xs">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-civic-secondary">
-                    <Smartphone className="h-4 w-4" />
+                  Indian Mobile Number <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-2">
+                  <div className="w-24 flex items-center justify-center text-xs sm:text-sm py-2.5 px-2 bg-gray-50 border border-civic-border rounded-lg text-navy-900 font-semibold select-none min-h-[44px]">
+                    🇮🇳 {countryCode}
                   </div>
+
+                  <div className="relative flex-1 rounded-lg shadow-2xs">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-civic-secondary">
+                      <Smartphone className="h-4 w-4" />
+                    </div>
+                    <input
+                      ref={phoneInputRef}
+                      id="citizenMobile"
+                      type="tel"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={10}
+                      required
+                      value={mobileNumber}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        setMobileNumber(digits);
+                        if (errorMessage) setErrorMessage(null);
+                      }}
+                      onBlur={() => setPhoneTouched(true)}
+                      placeholder="10-digit mobile number"
+                      className={`block w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm bg-white border rounded-lg text-navy-900 placeholder-gray-400 focus:outline-none focus:ring-2 font-mono min-h-[44px] ${
+                        phoneTouched && !isPhoneValid && mobileNumber.length > 0
+                          ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
+                          : 'border-civic-border focus:ring-teal-500 focus:border-teal-500'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                {phoneTouched && mobileNumber.length > 0 && !isPhoneValid && (
+                  <p className="mt-1.5 text-xs text-red-600">
+                    Please enter a valid 10-digit Indian mobile number (e.g., 9103009286).
+                  </p>
+                )}
+              </div>
+
+              {/* Collapsible Optional Citizen Details */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowOptionalProfile(!showOptionalProfile)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:text-teal-800 transition-colors py-1 focus:outline-none"
+                >
+                  <Info className="w-3.5 h-3.5 text-teal-600" />
+                  <span>
+                    {showOptionalProfile
+                      ? 'Hide Optional Profile Info'
+                      : 'Add Name & Ward Number (Optional)'}
+                  </span>
+                </button>
+
+                {showOptionalProfile && (
+                  <div className="mt-3 p-3.5 rounded-xl bg-gray-50 border border-civic-border space-y-3 animate-fadeIn">
+                    {/* Full Name */}
+                    <div>
+                      <label
+                        htmlFor="citizenFullName"
+                        className="block text-[11px] font-semibold text-navy-900 uppercase tracking-wider mb-1"
+                      >
+                        Full Name (Optional)
+                      </label>
+                      <div className="relative rounded-lg shadow-2xs">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-civic-secondary">
+                          <User className="h-3.5 w-3.5" />
+                        </div>
+                        <input
+                          id="citizenFullName"
+                          type="text"
+                          maxLength={100}
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="e.g. Sunil Kumar"
+                          className="block w-full pl-9 pr-3 py-2 text-xs bg-white border border-civic-border rounded-lg text-navy-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ward Number */}
+                    <div>
+                      <label
+                        htmlFor="citizenWard"
+                        className="block text-[11px] font-semibold text-navy-900 uppercase tracking-wider mb-1"
+                      >
+                        Jammu Ward (1–75, Optional)
+                      </label>
+                      <div className="relative rounded-lg shadow-2xs">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-civic-secondary">
+                          <Building className="h-3.5 w-3.5" />
+                        </div>
+                        <select
+                          id="citizenWard"
+                          value={wardNumber}
+                          onChange={(e) =>
+                            setWardNumber(e.target.value ? Number(e.target.value) : '')
+                          }
+                          className="block w-full pl-9 pr-3 py-2 text-xs bg-white border border-civic-border rounded-lg text-navy-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                        >
+                          <option value="">Select Jammu Ward (Optional)</option>
+                          {JAMMU_WARDS.map((w) => (
+                            <option key={w.number} value={w.number}>
+                              Ward {w.number}: {w.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Submit Button */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={isRequestingOtp || (phoneTouched && !isPhoneValid) || mobileNumber.length < 10}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-teal-500 hover:bg-teal-600 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
+                >
+                  {isRequestingOtp ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Requesting OTP...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Get Verification Code</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Quick Test Helper for Developer Testing */}
+              <div className="pt-2 border-t border-gray-100">
+                <div className="flex items-center justify-between text-[11px] text-civic-secondary">
+                  <span>Quick test number:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleFillDemoNumber('9103009286')}
+                    className="font-mono text-teal-700 hover:text-teal-900 font-semibold underline"
+                  >
+                    9103009286
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          {/* STEP B: 6-DIGIT OTP ENTRY */}
+          {step === 'OTP' && (
+            <form onSubmit={handleVerify} className="space-y-4" noValidate>
+              {/* Target Phone & Change Number option */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50 border border-civic-border">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-teal-600" />
+                  <div>
+                    <span className="text-[10px] text-gray-500 block uppercase font-semibold">
+                      Code Sent To
+                    </span>
+                    <span className="text-xs font-mono font-bold text-navy-900">
+                      +91 {cleanPhone}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleReturnToPhone}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900 transition-colors p-1"
+                  title="Change mobile number"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </button>
+              </div>
+
+              {/* Dev Notice: Mock OTP is in backend terminal */}
+              <div className="p-3 rounded-xl bg-slate-900 text-slate-100 border border-slate-800 text-xs space-y-1.5">
+                <div className="flex items-center gap-1.5 text-teal-400 font-semibold text-[11px]">
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span>Development Terminal Notice</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  During development, the mock SMS gateway does not dispatch real cellular SMS.
+                  Your 6-digit code has been output to the <strong>backend server terminal</strong>.
+                </p>
+              </div>
+
+              {/* 6-Digit OTP Field */}
+              <div>
+                <label
+                  htmlFor="otpCode"
+                  className="block text-xs font-semibold text-navy-900 uppercase tracking-wider mb-1.5"
+                >
+                  6-Digit Verification Code <span className="text-red-500">*</span>
+                </label>
+                <div className="relative rounded-lg shadow-2xs">
                   <input
-                    id="mobileNumber"
-                    type="tel"
-                    maxLength={10}
+                    ref={otpInputRef}
+                    id="otpCode"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
                     required
-                    value={mobileNumber}
-                    onChange={(e) => setMobileNumber(e.target.value)}
-                    placeholder="10-digit mobile number"
-                    className="block w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm bg-white border border-civic-border rounded-lg text-navy-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 font-mono min-h-[44px]"
+                    value={otp}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, '').slice(0, 6);
+                      setOtp(clean);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
+                    placeholder="••••••"
+                    className="block w-full px-3 py-3 text-center text-lg sm:text-xl tracking-[0.4em] bg-white border border-civic-border rounded-lg text-navy-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 font-mono font-bold min-h-[44px]"
                   />
                 </div>
               </div>
-            </div>
 
-            {/* Send OTP button or status */}
-            <div className="flex items-center justify-between text-xs pt-1">
-              <button
-                type="button"
-                onClick={handleSendOtp}
-                disabled={isSendingOtp}
-                className="text-xs font-semibold text-teal-700 hover:text-teal-800 flex items-center gap-1.5 transition-colors disabled:opacity-50 min-h-[44px]"
-              >
-                <RotateCcw className={`w-3.5 h-3.5 ${isSendingOtp ? 'animate-spin' : ''}`} />
-                <span>{otpSent ? 'Resend Verification Code' : 'Send One-Time Password (OTP)'}</span>
-              </button>
-            </div>
-
-            {/* 6-Digit OTP Field */}
-            <div>
-              <label
-                htmlFor="otpCode"
-                className="block text-xs font-semibold text-navy-900 uppercase tracking-wider mb-1.5"
-              >
-                6-Digit Verification Code (OTP)
-              </label>
-              <div className="relative rounded-lg shadow-2xs">
-                <input
-                  id="otpCode"
-                  type="text"
-                  maxLength={6}
-                  required
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  placeholder="Enter 6-digit OTP"
-                  className="block w-full px-3 py-2.5 text-center text-sm sm:text-base tracking-widest bg-white border border-civic-border rounded-lg text-navy-900 placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 font-mono font-bold min-h-[44px]"
-                />
+              {/* Resend OTP Button with Cooldown Timer */}
+              <div className="flex items-center justify-between text-xs pt-1">
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={cooldown > 0 || isRequestingOtp}
+                  className="text-xs font-semibold text-teal-700 hover:text-teal-800 flex items-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${isRequestingOtp ? 'animate-spin' : ''}`} />
+                  <span>
+                    {cooldown > 0
+                      ? `Resend code in ${cooldown}s`
+                      : 'Resend Verification Code'}
+                  </span>
+                </button>
               </div>
-            </div>
 
-            {/* Verify & Continue Button */}
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-teal-500 hover:bg-teal-600 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px]"
-              >
-                {isLoading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Verifying code...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Verify and Continue to Portal</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
+              {/* Verify & Continue Button */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={isVerifyingOtp || !isOtpValid}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-teal-500 hover:bg-teal-600 text-white font-semibold text-xs sm:text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px]"
+                >
+                  {isVerifyingOtp ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Verifying code...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Verify & Continue to Portal</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
 
-          {/* Privacy Note */}
+          {/* Privacy & Security Note */}
           <div className="mt-5 pt-4 border-t border-civic-border">
-            <p className="text-[11px] sm:text-xs text-civic-secondary leading-relaxed">
-              <strong>Simulated OTP:</strong> Uses in-memory verification. Real SMS dispatch will be activated with Twilio / CDAC SMS Gateway on FastAPI deployment.
+            <p className="text-[11px] text-civic-secondary leading-relaxed">
+              <strong>Jammu Municipal Corporation (JMC):</strong> OTP verification provisions a secure,
+              authenticated citizen session. Never share your verification codes with anyone.
             </p>
           </div>
         </div>

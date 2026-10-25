@@ -9,7 +9,6 @@ import {
 import { FilterOptions } from '../types/common';
 import { apiClient } from './apiClient';
 import { MOCK_GRIEVANCES } from '../data/mockGrievances';
-import { JAMMU_WARDS } from '../data/jammuWards';
 
 const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA !== 'false';
 
@@ -157,64 +156,53 @@ export const grievanceService = {
   },
 
   /**
-   * Create a new grievance
+   * Retrieve only the authenticated citizen's grievances from real backend.
+   * Enforces server-side citizen isolation.
+   */
+  async getMyGrievances(): Promise<Grievance[]> {
+    const response = await apiClient<{ success: boolean; complaints: Grievance[] }>(
+      '/api/complaints/my'
+    );
+    return response.complaints || [];
+  },
+
+  /**
+   * Create a new grievance via real backend POST /api/complaints.
+   * Derives ownership strictly from the authenticated JWT session.
    */
   async createGrievance(dto: CreateGrievanceDTO): Promise<Grievance> {
-    if (!USE_MOCK_DATA) {
-      try {
-        return await apiClient<Grievance>('/api/complaints', {
-          method: 'POST',
-          body: JSON.stringify(dto),
-        });
-      } catch (err) {
-        console.warn('Backend create failed, saving to local state.', err);
-      }
-    }
-
-    const assignedWard =
-      JAMMU_WARDS.find((w) => w.id === dto.wardId) ||
-      JAMMU_WARDS[0];
-
-    const newGrievance: Grievance = {
-      id: `grv-${Date.now()}`,
-      trackingNumber: `JMC-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: dto.title,
-      description: dto.description,
+    const payload = {
+      title: dto.title.trim(),
+      description: dto.description.trim(),
       category: dto.category,
-      status: 'AI_TRIAGED',
-      priority: 'MEDIUM',
-      location: dto.location,
-      address: dto.address,
-      landmark: dto.landmark,
-      ward: assignedWard,
-      imageUrl: dto.imageUrl || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
-      reporterName: dto.isAnonymous ? undefined : dto.reporterName,
-      reporterPhone: dto.isAnonymous ? undefined : dto.reporterPhone,
-      isAnonymous: dto.isAnonymous ?? false,
-      supportCount: 1,
-      isSupportedByCurrentUser: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      slaDeadline: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
-      aiTriageMetadata: {
-        confidence: 0.91,
-        detectedCategory: dto.category,
-        severityScore: 6.8,
-        suggestedDepartment: 'Municipal Works Division',
+      location: {
+        latitude: dto.location.latitude,
+        longitude: dto.location.longitude,
       },
-      timeline: [
-        {
-          id: `tl-${Date.now()}`,
-          status: 'REPORTED',
-          timestamp: new Date().toISOString(),
-          actor: dto.isAnonymous ? 'Citizen (Anonymous)' : dto.reporterName || 'Citizen',
-          note: 'Initial report submitted via CivicConnect Web',
-        },
-      ],
+      address: dto.address.trim(),
+      landmark: dto.landmark?.trim() || undefined,
+      wardId: dto.wardId,
+      imageUrl: dto.imageUrl || undefined,
+      isAnonymous: dto.isAnonymous ?? false,
     };
 
-    localGrievances = [newGrievance, ...localGrievances];
-    return newGrievance;
+    const response = await apiClient<{
+      success: boolean;
+      grievance: Grievance;
+      complaint: Grievance;
+    }>('/api/complaints', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    const created = response.grievance || response.complaint;
+    if (!created) {
+      throw new Error('Server did not return the created grievance.');
+    }
+
+    // Keep local cache up-to-date for backward-compatible views
+    localGrievances = [created, ...localGrievances];
+    return created;
   },
 
   /**

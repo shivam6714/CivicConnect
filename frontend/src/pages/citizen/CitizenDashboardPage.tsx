@@ -24,53 +24,57 @@ export const CitizenDashboardPage: React.FC = () => {
 
   const [allGrievances, setAllGrievances] = useState<Grievance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
 
+  const fetchGrievances = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      const data = await grievanceService.getMyGrievances();
+      setAllGrievances(data);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Failed to retrieve your grievances from the server. Please check your connection.';
+      setErrorMessage(msg);
+      setAllGrievances([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      setIsLoading(true);
-      try {
-        const data = await grievanceService.getGrievances();
-        setAllGrievances(data);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    load();
+    fetchGrievances();
   }, []);
 
-  // Filter complaints belonging to the citizen
-  const myGrievances = useMemo(() => {
+  // Filter complaints belonging strictly to this authenticated citizen
+  const filteredGrievances = useMemo(() => {
     return allGrievances.filter((g) => {
-      const isMine =
-        (user?.name && g.reporterName?.toLowerCase().includes(user.name.toLowerCase())) ||
-        (user?.phone && g.reporterPhone === user.phone) ||
-        g.isSupportedByCurrentUser;
-      if (!isMine) return false;
-
       if (statusFilter !== 'ALL' && g.status !== statusFilter) return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchRef = g.trackingNumber.toLowerCase().includes(q);
-        const matchTitle = g.title.toLowerCase().includes(q);
-        const matchAddress = g.address.toLowerCase().includes(q);
+        const matchRef = g.trackingNumber?.toLowerCase().includes(q);
+        const matchTitle = g.title?.toLowerCase().includes(q);
+        const matchAddress = g.address?.toLowerCase().includes(q);
         if (!matchRef && !matchTitle && !matchAddress) return false;
       }
 
       return true;
     });
-  }, [allGrievances, user?.name, statusFilter, searchQuery]);
+  }, [allGrievances, statusFilter, searchQuery]);
 
-  // Derived counts for current citizen
-  const totalMyGrievances = myGrievances.length;
-  const pendingCount = myGrievances.filter(
+  // Derived counts computed directly from authenticated citizen's persisted records
+  const totalMyGrievances = allGrievances.length;
+  const pendingCount = allGrievances.filter(
     (g) => g.status === 'REPORTED' || g.status === 'AI_TRIAGED'
   ).length;
-  const inProgressCount = myGrievances.filter((g) => g.status === 'IN_PROGRESS').length;
-  const resolvedCount = myGrievances.filter((g) => g.status === 'RESOLVED').length;
+  const inProgressCount = allGrievances.filter((g) => g.status === 'IN_PROGRESS').length;
+  const resolvedCount = allGrievances.filter((g) => g.status === 'RESOLVED').length;
 
   const handleLogout = async () => {
     await logout();
@@ -104,6 +108,11 @@ export const CitizenDashboardPage: React.FC = () => {
             {user?.phone && (
               <span className="text-[11px] text-navy-900 font-mono font-semibold bg-gray-100 px-2 py-0.5 rounded">
                 {user.phone}
+              </span>
+            )}
+            {(user?.wardAssigned || user?.wardNumber) && (
+              <span className="text-[11px] text-teal-800 font-semibold bg-teal-50 border border-teal-200 px-2 py-0.5 rounded">
+                Ward {user.wardAssigned || user.wardNumber}
               </span>
             )}
             <span className="text-xs text-gray-400 font-mono hidden sm:inline">Jammu Municipal Corporation</span>
@@ -233,18 +242,63 @@ export const CitizenDashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ERROR BANNER */}
+      {errorMessage && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs text-red-800 flex items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            onClick={fetchGrievances}
+            className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-900 rounded-lg font-semibold transition-colors shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* MY GRIEVANCES LIST */}
       <div className="space-y-3">
-        <h2 className="text-sm font-bold text-navy-900 uppercase tracking-wider">
-          My Submitted Grievances ({myGrievances.length})
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-navy-900 uppercase tracking-wider">
+            My Submitted Grievances ({filteredGrievances.length}
+            {filteredGrievances.length !== allGrievances.length && !isLoading
+              ? ` of ${allGrievances.length}`
+              : ''}
+            )
+          </h2>
+          {allGrievances.length > 0 && (
+            <button
+              onClick={fetchGrievances}
+              disabled={isLoading}
+              className="text-xs text-teal-600 hover:text-teal-700 font-semibold disabled:opacity-50"
+            >
+              Refresh
+            </button>
+          )}
+        </div>
 
         {isLoading ? (
           <div className="bg-white rounded-xl border border-civic-border p-12 text-center shadow-2xs flex flex-col items-center justify-center space-y-2 text-xs text-civic-secondary">
             <div className="w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
             <span>Loading your grievances...</span>
           </div>
-        ) : myGrievances.length === 0 ? (
+        ) : errorMessage && allGrievances.length === 0 ? (
+          <div className="bg-white rounded-xl border border-civic-border p-12 text-center shadow-2xs space-y-3">
+            <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <h3 className="text-sm font-bold text-navy-900">Unable to load grievances</h3>
+            <p className="text-xs text-civic-secondary max-w-sm mx-auto">{errorMessage}</p>
+            <button
+              onClick={fetchGrievances}
+              className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 text-white text-xs font-semibold hover:bg-navy-800 transition-colors"
+            >
+              Retry Loading
+            </button>
+          </div>
+        ) : allGrievances.length === 0 ? (
           <div className="bg-white rounded-xl border border-civic-border p-12 text-center shadow-2xs">
             <div className="w-12 h-12 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center mx-auto mb-3">
               <FilePlus className="w-6 h-6" />
@@ -255,15 +309,34 @@ export const CitizenDashboardPage: React.FC = () => {
             </p>
             <Link
               to="/submit"
-              className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 text-white text-xs font-semibold"
+              className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 hover:bg-navy-800 text-white text-xs font-semibold transition-colors"
             >
               <FilePlus className="w-4 h-4" />
               <span>File Your First Grievance</span>
             </Link>
           </div>
+        ) : filteredGrievances.length === 0 ? (
+          <div className="bg-white rounded-xl border border-civic-border p-10 text-center shadow-2xs">
+            <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center mx-auto mb-2">
+              <Search className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-bold text-navy-900">No matching grievances found</h3>
+            <p className="text-xs text-civic-secondary mt-1">
+              Try adjusting your search query or reset the status filter.
+            </p>
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                setStatusFilter('ALL');
+              }}
+              className="mt-3 px-3.5 py-1.5 rounded-lg border border-gray-200 text-xs text-navy-900 font-semibold hover:bg-gray-50 transition-colors"
+            >
+              Clear filters
+            </button>
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {myGrievances.map((g) => (
+            {filteredGrievances.map((g) => (
               <div
                 key={g.id}
                 className="bg-white rounded-xl border border-civic-border p-5 shadow-2xs hover:border-teal-300 hover:shadow-subtle transition-all flex flex-col justify-between"
@@ -283,15 +356,17 @@ export const CitizenDashboardPage: React.FC = () => {
                     <span className="flex items-center gap-1 text-navy-900">
                       <MapPin className="w-3.5 h-3.5 text-teal-600" />
                       <span>
-                        Ward {g.ward.number}: {g.ward.name.split('&')[0]}
+                        Ward {g.ward?.number}: {g.ward?.name ? g.ward.name.split('&')[0] : `Ward ${g.ward?.number}`}
                       </span>
                     </span>
                     <span>
-                      {new Date(g.createdAt).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
+                      {g.createdAt
+                        ? new Date(g.createdAt).toLocaleDateString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })
+                        : ''}
                     </span>
                   </div>
 

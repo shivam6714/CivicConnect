@@ -17,10 +17,14 @@ import {
   Sparkles,
   UserCheck,
   RotateCcw,
+  AlertTriangle,
+  Lock,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export const SubmitGrievancePage: React.FC = () => {
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
 
   const [category, setCategory] = useState<GrievanceCategory>('POTHOLE_ROAD');
   const [title, setTitle] = useState('');
@@ -31,10 +35,9 @@ export const SubmitGrievancePage: React.FC = () => {
   const [wardSource, setWardSource] = useState<'auto' | 'manual' | 'none'>('none');
   const [location, setLocation] = useState<SelectedLocationData | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
-  const [reporterName, setReporterName] = useState('');
-  const [reporterPhone, setReporterPhone] = useState('');
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Duplicate Check Modal State
   const [duplicateResult, setDuplicateResult] = useState<DuplicateDetectionResult | null>(null);
@@ -83,6 +86,14 @@ export const SubmitGrievancePage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
+
+    // Require authenticated citizen session
+    if (!isAuthenticated || !user) {
+      setSubmitError('Authentication required. Please sign in with your mobile OTP to file an official grievance.');
+      navigate('/login/citizen', { state: { from: { pathname: '/submit' } } });
+      return;
+    }
 
     // Basic Validation: Location is mandatory
     if (!location || !location.latitude || !location.longitude) {
@@ -128,22 +139,21 @@ export const SubmitGrievancePage: React.FC = () => {
     if (!location || wardId === null) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const payload: CreateGrievanceDTO = {
-        title,
-        description,
+        title: title.trim(),
+        description: description.trim(),
         category,
         location: {
           latitude: location.latitude,
           longitude: location.longitude,
         },
         selectionMethod: location.selectionMethod,
-        address: address || `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`,
-        landmark,
+        address: address.trim() || `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`,
+        landmark: landmark.trim() || undefined,
         wardId,
         imageUrl: imagePreview || undefined,
-        reporterName,
-        reporterPhone,
         isAnonymous,
       };
 
@@ -151,9 +161,10 @@ export const SubmitGrievancePage: React.FC = () => {
       setCreatedTrackingNumber(created.trackingNumber);
       setSubmittedSuccess(true);
       setShowDuplicateModal(false);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Error submitting complaint:', err);
-      alert('Failed to submit grievance. Please try again.');
+      const msg = err instanceof Error ? err.message : 'Failed to submit grievance. Please try again.';
+      setSubmitError(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -204,10 +215,7 @@ export const SubmitGrievancePage: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-civic-secondary max-w-md mx-auto mt-2 leading-relaxed">
-              Assigned to designated ward field queue. Spatial duplicate verification complete.
-              <span className="block text-[11px] text-gray-400 mt-1">
-                (Simulated Development Mode: Saved to central mock repository)
-              </span>
+              Assigned to designated ward field queue. Recorded in Jammu Municipal Corporation database.
             </p>
           </div>
 
@@ -226,6 +234,7 @@ export const SubmitGrievancePage: React.FC = () => {
                 setTitle('');
                 setDescription('');
                 setCreatedTrackingNumber(null);
+                setSubmitError(null);
               }}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-navy-900 font-semibold text-xs transition-colors"
             >
@@ -236,6 +245,17 @@ export const SubmitGrievancePage: React.FC = () => {
         </Card>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Submit Error Banner */}
+          {submitError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs text-red-800 flex items-center gap-3 shadow-2xs">
+              <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+              <div className="flex-1">
+                <span className="font-bold">Submission failed: </span>
+                <span>{submitError}</span>
+              </div>
+            </div>
+          )}
+
           {/* Category Selection */}
           <Card className="p-6 space-y-4">
             <label className="block text-sm font-semibold text-navy-900">
@@ -373,32 +393,42 @@ export const SubmitGrievancePage: React.FC = () => {
               </label>
             </div>
 
-            {!isAnonymous && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-navy-900 mb-1">
-                    Your Full Name
-                  </label>
-                  <input
-                    type="text"
-                    value={reporterName}
-                    onChange={(e) => setReporterName(e.target.value)}
-                    placeholder="e.g. Shivam Gupta"
-                    className="w-full px-3 py-2 text-sm border border-civic-border rounded-lg focus:ring-2 focus:ring-navy-900 focus:outline-none bg-white"
-                  />
+            {user ? (
+              <div className="bg-gray-50/70 rounded-xl p-4 border border-civic-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-navy-900">
+                      {isAnonymous ? 'Anonymous Citizen' : user.name || 'Citizen'}
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
+                      <UserCheck className="w-3 h-3 text-teal-600" />
+                      Verified Citizen Session
+                    </span>
+                  </div>
+                  <p className="text-xs text-civic-secondary">
+                    {isAnonymous
+                      ? 'Your personal identity is masked on public listings and visible only to assigned municipal engineers.'
+                      : `SMS notifications and status updates will be routed to ${user.phone || user.phoneNumber}.`}
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-navy-900 mb-1">
-                    Phone Number (for SMS updates)
-                  </label>
-                  <input
-                    type="tel"
-                    value={reporterPhone}
-                    onChange={(e) => setReporterPhone(e.target.value)}
-                    placeholder="e.g. +91 94191 XXXXX"
-                    className="w-full px-3 py-2 text-sm border border-civic-border rounded-lg focus:ring-2 focus:ring-navy-900 focus:outline-none bg-white"
-                  />
+                <div className="text-xs font-mono font-semibold text-navy-900 bg-white px-3 py-1.5 rounded-lg border border-gray-200 self-start sm:self-auto">
+                  {user.phone || user.phoneNumber}
                 </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 rounded-xl p-4 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    <span className="font-semibold">Authentication Required:</span> Sign in with your mobile OTP to file a verified municipal grievance.
+                  </span>
+                </div>
+                <Link
+                  to="/login/citizen"
+                  className="px-3.5 py-1.5 bg-navy-900 hover:bg-navy-800 text-white rounded-lg font-semibold transition-colors whitespace-nowrap self-start sm:self-auto"
+                >
+                  Log In with OTP
+                </Link>
               </div>
             )}
           </Card>

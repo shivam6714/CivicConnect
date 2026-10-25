@@ -2,12 +2,13 @@
 node_modules/
 **/node_modules/
 
-# Python cache & virtualenvs
+# Python cache and virtual environments
 __pycache__/
 **/__pycache__/
 *.py[cod]
 *$py.class
 .venv/
+**/.venv/
 venv/
 env/
 
@@ -31,3 +32,7 @@ pnpm-debug.log*
 # Editor settings
 .vscode/
 .idea/
+
+# Local runner scripts
+powershell.cmd
+**/powershell.cmd
