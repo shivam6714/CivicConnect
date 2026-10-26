@@ -11,14 +11,15 @@ import {
   SelectedLocationData,
 } from '../types/grievance';
 import { grievanceService } from '../services/grievanceService';
+import { ApiError } from '../services/apiClient';
 import {
-  UploadCloud,
   CheckCircle,
   Sparkles,
   UserCheck,
   RotateCcw,
   AlertTriangle,
   Lock,
+  Info,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -36,7 +37,7 @@ export const SubmitGrievancePage: React.FC = () => {
   const [location, setLocation] = useState<SelectedLocationData | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isAnonymous, setIsAnonymous] = useState(false);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Duplicate Check Modal State
@@ -52,6 +53,7 @@ export const SubmitGrievancePage: React.FC = () => {
     { value: 'GARBAGE_ACCUMULATION', label: 'Garbage & Waste', icon: '🗑️' },
     { value: 'DRAINAGE_SEWAGE', label: 'Drainage / Sewage', icon: '🌊' },
     { value: 'WATER_SUPPLY', label: 'Water Leakage (PHE)', icon: '🚰' },
+    { value: 'ENCROACHMENT', label: 'Encroachment / Public Space', icon: '🚧' },
     { value: 'OTHER', label: 'Other Civic Hazard', icon: '⚠️' },
   ];
 
@@ -70,14 +72,6 @@ export const SubmitGrievancePage: React.FC = () => {
     }
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setImagePreview(url);
-    }
-  };
-
   const handleWardChange = (newWardId: number | null, source: 'auto' | 'manual') => {
     setWardId(newWardId);
     setWardSource(source);
@@ -86,7 +80,9 @@ export const SubmitGrievancePage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return; // Prevent duplicate submission
     setSubmitError(null);
+    setLocationError(null);
 
     // Require authenticated citizen session
     if (!isAuthenticated || !user) {
@@ -95,41 +91,55 @@ export const SubmitGrievancePage: React.FC = () => {
       return;
     }
 
-    // Basic Validation: Location is mandatory
+    // Required fields validation
+    if (!title.trim() || title.trim().length < 3) {
+      setSubmitError('Issue title must be at least 3 characters long.');
+      return;
+    }
+
+    if (!description.trim() || description.trim().length < 5) {
+      setSubmitError('Detailed description must be at least 5 characters long.');
+      return;
+    }
+
+    if (address.trim() && address.trim().length < 3) {
+      setSubmitError('Address must be at least 3 characters long.');
+      return;
+    }
+
+    // Location is mandatory
     if (!location || !location.latitude || !location.longitude) {
       setLocationError(
         'Please select a valid incident location by clicking on the map or using your current location.'
       );
-      // Scroll smoothly to location section
       window.scrollTo({ top: 380, behavior: 'smooth' });
       return;
     }
 
-    if (wardId === null) {
+    if (wardId === null || wardId < 1 || wardId > 75) {
       setLocationError(
-        'Please select or verify your designated Jammu Municipal Ward in the dropdown.'
+        'Please select or verify your designated Jammu Municipal Ward (1-75) in the dropdown.'
       );
       window.scrollTo({ top: 480, behavior: 'smooth' });
       return;
     }
 
-    if (!title.trim() || !description.trim()) {
-      alert('Please fill out the issue title and description.');
-      return;
-    }
-
     setIsSubmitting(true);
 
-    // Run duplicate check if not already verified
-    const dupCheck = await grievanceService.checkNearbyDuplicates(
-      { latitude: location.latitude, longitude: location.longitude },
-      category
-    );
-    if (dupCheck.isPotentialDuplicate && dupCheck.nearbyGrievances.length > 0 && !duplicateResult) {
-      setDuplicateResult(dupCheck);
-      setShowDuplicateModal(true);
-      setIsSubmitting(false);
-      return;
+    try {
+      // Run duplicate check if not already verified
+      const dupCheck = await grievanceService.checkNearbyDuplicates(
+        { latitude: location.latitude, longitude: location.longitude },
+        category
+      );
+      if (dupCheck.isPotentialDuplicate && dupCheck.nearbyGrievances.length > 0 && !duplicateResult) {
+        setDuplicateResult(dupCheck);
+        setShowDuplicateModal(true);
+        setIsSubmitting(false);
+        return;
+      }
+    } catch (checkErr) {
+      console.warn('Duplicate check skipped:', checkErr);
     }
 
     await executeCreate();
@@ -137,10 +147,14 @@ export const SubmitGrievancePage: React.FC = () => {
 
   const executeCreate = async () => {
     if (!location || wardId === null) return;
+    if (isSubmitting && submittedSuccess) return;
 
     setIsSubmitting(true);
     setSubmitError(null);
     try {
+      const generatedAddress =
+        address.trim() || `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+
       const payload: CreateGrievanceDTO = {
         title: title.trim(),
         description: description.trim(),
@@ -150,10 +164,10 @@ export const SubmitGrievancePage: React.FC = () => {
           longitude: location.longitude,
         },
         selectionMethod: location.selectionMethod,
-        address: address.trim() || `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`,
+        address: generatedAddress,
         landmark: landmark.trim() || undefined,
         wardId,
-        imageUrl: imagePreview || undefined,
+        imageUrl: imageUrl.trim() || undefined,
         isAnonymous,
       };
 
@@ -163,6 +177,11 @@ export const SubmitGrievancePage: React.FC = () => {
       setShowDuplicateModal(false);
     } catch (err: unknown) {
       console.error('Error submitting complaint:', err);
+      if (err instanceof ApiError && err.status === 401) {
+        setSubmitError('Your session has expired. Please log in again.');
+        navigate('/login/citizen', { state: { from: { pathname: '/submit' } } });
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'Failed to submit grievance. Please try again.';
       setSubmitError(msg);
     } finally {
@@ -233,6 +252,11 @@ export const SubmitGrievancePage: React.FC = () => {
                 setSubmittedSuccess(false);
                 setTitle('');
                 setDescription('');
+                setAddress('');
+                setLandmark('');
+                setImageUrl('');
+                setLocation(null);
+                setWardId(null);
                 setCreatedTrackingNumber(null);
                 setSubmitError(null);
               }}
@@ -280,37 +304,54 @@ export const SubmitGrievancePage: React.FC = () => {
             </div>
           </Card>
 
-          {/* Photo Upload */}
+          {/* Photo Proof */}
           <Card className="p-6 space-y-4">
-            <label className="block text-sm font-semibold text-navy-900">
-              2. Attach Photographic Proof
-            </label>
-            <div className="flex flex-col sm:flex-row items-center gap-6">
-              <label className="flex-1 w-full flex flex-col items-center justify-center border-2 border-dashed border-civic-border hover:border-teal-500 rounded-xl p-6 cursor-pointer bg-gray-50/50 hover:bg-teal-50/20 transition-all text-center">
-                <UploadCloud className="w-8 h-8 text-navy-400 mb-2" />
-                <span className="text-xs font-semibold text-navy-900">
-                  Click to upload or drag photo
-                </span>
-                <span className="text-[11px] text-civic-secondary mt-1">
-                  PNG, JPG up to 10MB
-                </span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleImageChange}
-                />
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-semibold text-navy-900">
+                2. Photographic Proof (Optional)
               </label>
+              <span className="text-[11px] text-teal-700 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-full font-medium">
+                URL Supported
+              </span>
+            </div>
 
-              {imagePreview && (
-                <div className="w-full sm:w-48 h-32 rounded-lg overflow-hidden border border-civic-border relative group">
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="imageUrlInput" className="block text-xs font-medium text-navy-900 mb-1">
+                  Image Web URL
+                </label>
+                <div className="relative">
+                  <input
+                    id="imageUrlInput"
+                    type="url"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://example.com/incident-photo.jpg"
+                    className="w-full px-3 py-2 text-sm border border-civic-border rounded-lg focus:ring-2 focus:ring-navy-900 focus:outline-none bg-white font-mono text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-gray-50 border border-civic-border text-xs text-civic-secondary flex items-start gap-2">
+                <Info className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  <strong>Notice:</strong> Server-side binary file upload storage is not configured in this release.
+                  To attach photo evidence, provide a publicly accessible image web URL (PNG, JPG, WebP) above.
+                </p>
+              </div>
+
+              {imageUrl.trim() && (
+                <div className="w-full sm:w-64 h-36 rounded-lg overflow-hidden border border-civic-border relative group bg-gray-100">
                   <img
-                    src={imagePreview}
-                    alt="Preview"
+                    src={imageUrl.trim()}
+                    alt="Image Preview"
                     className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
                   />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[11px] font-medium">
-                    Attached Photo
+                    Attached Photo Preview
                   </div>
                 </div>
               )}
@@ -447,6 +488,7 @@ export const SubmitGrievancePage: React.FC = () => {
               variant="accent"
               size="lg"
               isLoading={isSubmitting}
+              disabled={isSubmitting || !title.trim() || !description.trim() || !location || wardId === null}
             >
               Submit Grievance to JMC
             </Button>

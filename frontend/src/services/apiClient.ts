@@ -111,6 +111,17 @@ export async function apiClient<T>(endpoint: string, options: ApiFetchOptions = 
       }
     }
 
+    if (response.status === 401) {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      sessionStorage.removeItem('civicconnect_auth_session');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('civic:session-expired'));
+      }
+      if (!errorMessage || errorMessage.startsWith('Request failed with status')) {
+        errorMessage = 'Your session has expired or is unauthorized. Please sign in again.';
+      }
+    }
+
     throw new ApiError(response.status, errorMessage, errorData, errorDetails);
   }
 

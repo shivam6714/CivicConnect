@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   Users,
   Smartphone,
@@ -23,6 +23,7 @@ type AuthStep = 'PHONE' | 'OTP';
 
 export const CitizenLoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { requestCitizenOtp, verifyCitizenOtp } = useAuth();
 
   // Current step in authentication flow
@@ -174,8 +175,10 @@ export const CitizenLoginPage: React.FC = () => {
         typeof wardNumber === 'number' ? wardNumber : undefined
       );
 
-      // Navigate directly to citizen portal dashboard upon verification
-      navigate('/citizen', { replace: true });
+      // Navigate to destination from location state or default to citizen portal dashboard
+      const targetDestination =
+        (location.state as { from?: { pathname?: string } })?.from?.pathname || '/citizen';
+      navigate(targetDestination, { replace: true });
     } catch (err: unknown) {
       const error = err as Error;
       setErrorMessage(

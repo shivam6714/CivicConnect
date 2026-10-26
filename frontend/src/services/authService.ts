@@ -95,6 +95,28 @@ export function mapBackendCitizenToUser(citizenUser: BackendCitizenUser): User {
   };
 }
 
+export function isJwtExpired(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return true;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    const payload = JSON.parse(jsonPayload) as { exp?: number };
+    if (typeof payload.exp === 'number') {
+      return Date.now() >= payload.exp * 1000;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export const authService = {
   /**
    * Request a 6-digit OTP code from backend via POST /api/auth/request-otp
@@ -186,10 +208,11 @@ export const authService = {
       if (!raw) return null;
       const user = JSON.parse(raw) as User;
 
-      // If user is a citizen, ensure their authentication token is present
+      // If user is a citizen, ensure their authentication token is present and not expired
       if (user.role === 'CITIZEN') {
         const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-        if (!token) {
+        if (!token || isJwtExpired(token)) {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
           sessionStorage.removeItem(SESSION_STORAGE_KEY);
           return null;
         }
@@ -197,6 +220,7 @@ export const authService = {
 
       return user;
     } catch {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
       return null;
     }
@@ -206,7 +230,15 @@ export const authService = {
    * Get currently active JWT token
    */
   getToken(): string | null {
-    return localStorage.getItem(TOKEN_STORAGE_KEY);
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token || isJwtExpired(token)) {
+      if (token) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+      return null;
+    }
+    return token;
   },
 
   /**
