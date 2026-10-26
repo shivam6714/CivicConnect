@@ -76,7 +76,7 @@ export const AdminOverviewPage: React.FC = () => {
 
   // Chart Data: Status Distribution
   const statusChartData = [
-    { name: 'Reported', count: grievances.filter((g) => g.status === 'REPORTED').length },
+    { name: 'Under Review', count: grievances.filter((g) => g.status === 'REPORTED').length },
     { name: 'AI Triaged', count: grievances.filter((g) => g.status === 'AI_TRIAGED').length },
     { name: 'In Progress', count: grievances.filter((g) => g.status === 'IN_PROGRESS').length },
     { name: 'Resolved', count: grievances.filter((g) => g.status === 'RESOLVED').length },
@@ -107,7 +107,8 @@ export const AdminOverviewPage: React.FC = () => {
   const getStatusBadge = (status: GrievanceStatus) => {
     switch (status) {
       case 'REPORTED':
-        return <span className="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">Reported</span>;
+        return <span className="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">Under Review</span>;
+
       case 'AI_TRIAGED':
         return <span className="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">AI Triaged</span>;
       case 'IN_PROGRESS':

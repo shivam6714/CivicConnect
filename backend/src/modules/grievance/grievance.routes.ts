@@ -5,6 +5,7 @@ import {
   getMyGrievancesController,
   getAllGrievancesController,
   getPublicMapGrievancesController,
+  getPublicStatsController,
   getGrievanceByIdController,
   updateGrievanceStatusController,
 } from './grievance.controller.js';
@@ -27,6 +28,9 @@ grievanceRouter.get('/my', authenticate, getMyGrievancesController);
 
 // GET /api/complaints/map - Public read-only grievance map coordinates (Omit private data)
 grievanceRouter.get('/map', getPublicMapGrievancesController);
+
+// GET /api/complaints/stats - Public aggregate statistics across grievances (Omit private data)
+grievanceRouter.get('/stats', getPublicStatsController);
 
 // GET /api/complaints/:id - Retrieve single grievance details (Admin or owning Citizen)
 grievanceRouter.get('/:id', authenticate, getGrievanceByIdController);

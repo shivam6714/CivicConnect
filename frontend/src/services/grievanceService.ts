@@ -5,6 +5,7 @@ import {
   GrievanceCategory,
   DuplicateDetectionResult,
   GrievanceStatus,
+  PublicGrievanceStats,
 } from '../types/grievance';
 import { FilterOptions } from '../types/common';
 import { apiClient } from './apiClient';
@@ -67,6 +68,33 @@ export const grievanceService = {
     }
     return response.complaints || response.data || [];
   },
+
+  /**
+   * Fetch aggregate public statistics across all grievances from backend GET /api/complaints/stats.
+   * Strictly anonymous, public read-only metrics.
+   */
+  async getPublicStats(): Promise<PublicGrievanceStats> {
+    const response = await apiClient<{ success?: boolean; stats?: PublicGrievanceStats; data?: PublicGrievanceStats }>(
+      '/api/complaints/stats'
+    );
+    if (response.stats) {
+      return response.stats;
+    }
+    if (response.data) {
+      return response.data;
+    }
+    return {
+      total: 0,
+      reported: 0,
+      aiTriaged: 0,
+      inProgress: 0,
+      resolved: 0,
+      rejected: 0,
+      totalSupports: 0,
+      resolutionRate: '0%',
+    };
+  },
+
 
   /**
    * Fetch single grievance by ID or tracking number

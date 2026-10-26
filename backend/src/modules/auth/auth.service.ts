@@ -10,7 +10,7 @@ import {
 } from './otp.utils.js';
 import { UserModel, formatCitizenUser } from './user.model.js';
 import { generateAuthToken } from './jwt.utils.js';
-import type { RequestOtpResponse, VerifyOtpInput, VerifyOtpResponse } from './auth.types.js';
+import type { RequestOtpResponse, VerifyOtpInput, VerifyOtpResponse, AdminLoginInput, CitizenUser } from './auth.types.js';
 import { getOtpProvider, MockOtpProvider } from '../../providers/otp/index.js';
 import { config } from '../../config/index.js';
 import { isDbConnected } from '../../config/db.js';
@@ -18,6 +18,7 @@ import {
   BadRequestError,
   BadGatewayError,
   ServiceUnavailableError,
+  UnauthorizedError,
 } from '../../errors/appError.js';
 import { normalizeIndianMobile, maskPhoneNumber } from '../../utils/phone.js';
 
@@ -377,6 +378,66 @@ export class AuthService {
       message: 'OTP verified successfully.',
       token,
       user: formatCitizenUser(user),
+    };
+  }
+
+  /**
+   * Authenticates administrative credentials and issues an authorized admin JWT token.
+   * Enables the Admin Console and Grievance Triage Dashboard to view and manage canonical grievance records.
+   */
+  async adminLogin(input: AdminLoginInput): Promise<VerifyOtpResponse> {
+    const validAdminId = process.env.ADMIN_ID || 'cityadmin@civicconnect.demo';
+    const validAdminPassword = process.env.ADMIN_PASSWORD || 'CityAdmin123!';
+
+    const isIdMatch = input.adminId.trim().toLowerCase() === validAdminId.toLowerCase();
+    const isPassMatch = input.password === validAdminPassword;
+
+    if (!isIdMatch || !isPassMatch) {
+      throw new UnauthorizedError('Invalid administrator credentials.');
+    }
+
+    const adminPhone = normalizeIndianMobile(process.env.ADMIN_PHONE || '9419100001');
+
+    let adminUser: CitizenUser;
+
+    if (config.enableDb && isDbConnected()) {
+      let dbAdmin = await UserModel.findOne({ phoneNumber: adminPhone });
+      if (!dbAdmin) {
+        dbAdmin = await UserModel.create({
+          phoneNumber: adminPhone,
+          fullName: 'JMC City Administrator',
+          wardNumber: 1,
+          role: 'admin',
+          isPhoneVerified: true,
+          lastLoginAt: new Date(),
+        });
+      } else {
+        dbAdmin.role = 'admin';
+        dbAdmin.isPhoneVerified = true;
+        dbAdmin.lastLoginAt = new Date();
+        await dbAdmin.save();
+      }
+      adminUser = formatCitizenUser(dbAdmin);
+    } else {
+      adminUser = {
+        id: '6ad48d2f740e000000000001',
+        phoneNumber: adminPhone,
+        fullName: 'JMC City Administrator',
+        wardNumber: 1,
+        role: 'admin' as const,
+        isPhoneVerified: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    }
+
+    const token = generateAuthToken(adminUser);
+
+    return {
+      success: true,
+      message: 'Administrator authenticated successfully.',
+      token,
+      user: adminUser,
     };
   }
 }

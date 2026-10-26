@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { grievanceService } from '../services/grievanceService';
 import { Grievance, GrievanceStatus } from '../types/grievance';
 import { JAMMU_WARDS } from '../data/jammuWards';
@@ -13,11 +14,13 @@ import {
   Clock,
   Sparkles,
   Zap,
+  Lock,
 } from 'lucide-react';
 
 export const TriageDashboardPage: React.FC = () => {
   const [grievances, setGrievances] = useState<Grievance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [wardFilter, setWardFilter] = useState<number | 'ALL'>('ALL');
@@ -25,11 +28,25 @@ export const TriageDashboardPage: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await grievanceService.getGrievances();
       setGrievances(data);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to load grievances', err);
+      const isAuthError =
+        err instanceof Error &&
+        (err.message.includes('401') ||
+          err.message.includes('403') ||
+          err.message.includes('privileges') ||
+          err.message.includes('Authentication') ||
+          err.message.includes('session'));
+      if (isAuthError) {
+        setError('Municipal administrator authorization is required to access the central triage queue.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Unable to connect to grievance server.');
+      }
+      setGrievances([]);
     } finally {
       setLoading(false);
     }
@@ -89,7 +106,7 @@ export const TriageDashboardPage: React.FC = () => {
             Municipal Grievance Triage Dashboard
           </h1>
           <p className="text-xs text-civic-secondary mt-0.5">
-            Real-time pipeline monitoring, AI prioritization, and departmental task routing.
+            Real-time pipeline monitoring, AI prioritization, and departmental task routing across all 75 JMC wards.
           </p>
         </div>
 
@@ -105,8 +122,23 @@ export const TriageDashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Admin Auth Notice if unauthenticated */}
+      {error && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="flex items-center gap-2.5">
+            <Lock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+          <Link to="/login/admin" state={{ from: { pathname: '/triage' } }}>
+            <Button size="sm" variant="accent">
+              Sign In as Admin
+            </Button>
+          </Link>
+        </div>
+      )}
+
       {/* Pipeline Status Tabs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <button
           onClick={() => setStatusFilter('ALL')}
           className={`p-3.5 rounded-xl border text-left transition-all ${
@@ -117,6 +149,21 @@ export const TriageDashboardPage: React.FC = () => {
         >
           <div className="text-xs font-medium opacity-80">All Tickets</div>
           <div className="text-2xl font-bold mt-1">{grievances.length}</div>
+        </button>
+
+        <button
+          onClick={() => setStatusFilter('REPORTED')}
+          className={`p-3.5 rounded-xl border text-left transition-all ${
+            statusFilter === 'REPORTED'
+              ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+              : 'bg-white text-navy-900 border-civic-border hover:bg-gray-50'
+          }`}
+        >
+          <div className="text-xs font-medium flex items-center gap-1 opacity-90">
+            <Clock className="w-3.5 h-3.5" />
+            Under Review
+          </div>
+          <div className="text-2xl font-bold mt-1">{countByStatus.REPORTED}</div>
         </button>
 
         <button
@@ -138,7 +185,7 @@ export const TriageDashboardPage: React.FC = () => {
           onClick={() => setStatusFilter('IN_PROGRESS')}
           className={`p-3.5 rounded-xl border text-left transition-all ${
             statusFilter === 'IN_PROGRESS'
-              ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+              ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
               : 'bg-white text-navy-900 border-civic-border hover:bg-gray-50'
           }`}
         >
@@ -164,6 +211,7 @@ export const TriageDashboardPage: React.FC = () => {
           <div className="text-2xl font-bold mt-1">{countByStatus.RESOLVED}</div>
         </button>
       </div>
+
 
       {/* Filter Toolbar */}
       <Card className="p-4 space-y-3">

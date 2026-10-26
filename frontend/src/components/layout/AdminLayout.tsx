@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   ClipboardList,
@@ -13,6 +13,7 @@ import {
   Building2,
   Menu,
   X,
+  UserCheck,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -59,10 +60,12 @@ export const AdminLayout: React.FC = () => {
           >
             {mobileSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
-          <div className="w-7 h-7 rounded-lg bg-navy-900 text-teal-400 font-extrabold flex items-center justify-center text-xs">
-            CC
-          </div>
-          <span className="font-bold text-navy-900 text-sm">CivicConnect Admin</span>
+          <Link to="/" className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-navy-900 text-teal-400 font-extrabold flex items-center justify-center text-xs">
+              CC
+            </div>
+            <span className="font-bold text-navy-900 text-sm">CivicConnect Admin</span>
+          </Link>
         </div>
 
         {/* Role badge for mobile */}
@@ -90,13 +93,13 @@ export const AdminLayout: React.FC = () => {
       >
         {/* Brand Header */}
         <div className="h-16 px-4 border-b border-civic-border flex items-center justify-between">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-9 h-9 rounded-xl bg-navy-900 text-teal-400 font-extrabold flex items-center justify-center text-sm shadow-2xs flex-shrink-0">
+          <Link to="/" className="flex items-center gap-3 overflow-hidden group" title="Return to Public Portal">
+            <div className="w-9 h-9 rounded-xl bg-navy-900 text-teal-400 font-extrabold flex items-center justify-center text-sm shadow-2xs flex-shrink-0 group-hover:bg-navy-800 transition-colors">
               CC
             </div>
             {!collapsed && (
               <div className="truncate">
-                <span className="font-bold text-navy-900 text-sm tracking-tight block">
+                <span className="font-bold text-navy-900 text-sm tracking-tight block group-hover:text-teal-700 transition-colors">
                   CivicConnect
                 </span>
                 <span className="text-[10px] font-semibold text-teal-700 tracking-wider uppercase block">
@@ -104,7 +107,7 @@ export const AdminLayout: React.FC = () => {
                 </span>
               </div>
             )}
-          </div>
+          </Link>
           {/* Collapse Toggle for Desktop */}
           <button
             onClick={() => setCollapsed(!collapsed)}
@@ -184,6 +187,16 @@ export const AdminLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Switch to Citizen Portal */}
+            <Link
+              to="/citizen"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-white hover:bg-teal-50 text-teal-800 text-xs font-semibold shadow-2xs transition-colors"
+              title="Switch to Citizen Portal"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-teal-600" />
+              <span>Citizen Portal</span>
+            </Link>
+
             {/* Centralized Municipal Scope Badge */}
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-teal-200 bg-teal-50 text-teal-800 text-xs font-semibold shadow-2xs">
               <Building2 className="w-3.5 h-3.5 text-teal-600" />

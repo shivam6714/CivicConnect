@@ -22,7 +22,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
     case 'REPORTED':
       return (
         <Badge variant="warning" icon={<Clock className="w-3 h-3" />}>
-          Reported
+          Under Review
         </Badge>
       );
     case 'AI_TRIAGED':

@@ -40,8 +40,8 @@ export const App: React.FC = () => {
             <Route path="map" element={<MapViewPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
 
-            {/* Protected Citizen Dashboard Route */}
-            <Route element={<ProtectedRoute allowedRoles={['CITIZEN', 'CITY_ADMIN']} />}>
+            {/* Protected Citizen Dashboard Route - Strictly for Citizens */}
+            <Route element={<ProtectedRoute allowedRoles={['CITIZEN']} />}>
               <Route path="citizen" element={<CitizenDashboardPage />} />
             </Route>
           </Route>

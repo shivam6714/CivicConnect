@@ -159,3 +159,18 @@ export interface PublicMapGrievance {
   supportCount: number;
   createdAt: string;
 }
+
+/**
+ * Public aggregate statistics across all grievances.
+ * Strictly anonymous with zero private citizen information.
+ */
+export interface PublicGrievanceStats {
+  total: number;
+  reported: number;
+  aiTriaged: number;
+  inProgress: number;
+  resolved: number;
+  rejected: number;
+  totalSupports: number;
+  resolutionRate: string;
+}

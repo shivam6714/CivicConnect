@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/server.js",
   "scripts": {
-    "test": "node scripts/verify-foundation.js && node scripts/verify-otp-request.js && node scripts/verify-otp-verification.js && node scripts/verify-grievance.js && node scripts/verify-citizen-workflow-e2e.js && node scripts/verify-admin-and-map.js && node scripts/verify-evidence-upload-and-identity.js",
+    "test": "node scripts/verify-foundation.js && node scripts/verify-otp-request.js && node scripts/verify-otp-verification.js && node scripts/verify-grievance.js && node scripts/verify-citizen-workflow-e2e.js && node scripts/verify-admin-and-map.js && node scripts/verify-evidence-upload-and-identity.js && node scripts/verify-grievance-sync-and-stats.js",
     "dev": "nodemon --watch src --ext ts --exec tsx src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"

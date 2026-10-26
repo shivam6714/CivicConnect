@@ -17,6 +17,7 @@ import type {
   UpdateGrievanceStatusInput,
   GrievanceFilterOptions,
   PublicMapGrievance,
+  PublicGrievanceStats,
 } from './grievance.types.js';
 import type { AuthJwtPayload } from '../auth/auth.types.js';
 import { BadRequestError, NotFoundError } from '../../errors/appError.js';
@@ -49,6 +50,9 @@ export class GrievanceService {
     input: CreateGrievanceInput,
     userPayload: AuthJwtPayload
   ): Promise<FormattedGrievance> {
+    if (!userPayload.sub || !mongoose.isValidObjectId(userPayload.sub)) {
+      throw new BadRequestError(`Invalid citizen user identifier: ${userPayload.sub}`);
+    }
     const citizenObjectId = new mongoose.Types.ObjectId(userPayload.sub);
 
     // Fetch user details from database to obtain official profile name if available
@@ -153,6 +157,9 @@ export class GrievanceService {
    * Strictly enforces database-level citizen isolation.
    */
   async getMyGrievances(userPayload: AuthJwtPayload): Promise<FormattedGrievance[]> {
+    if (!userPayload.sub || !mongoose.isValidObjectId(userPayload.sub)) {
+      throw new BadRequestError(`Invalid citizen user identifier: ${userPayload.sub}`);
+    }
     const citizenObjectId = new mongoose.Types.ObjectId(userPayload.sub);
 
     const docs = await GrievanceModel.find({ citizenId: citizenObjectId }).sort({
@@ -217,6 +224,49 @@ export class GrievanceService {
 
     return docs.map(formatPublicMapGrievance);
   }
+
+  /**
+   * Retrieves aggregate statistics across all grievances in the database.
+   * Strictly anonymous: zero personal or sensitive citizen data is exposed.
+   * Status "Under Review" (REPORTED) is properly aggregated into the total count.
+   */
+  async getPublicStats(): Promise<PublicGrievanceStats> {
+    const [stats] = await GrievanceModel.aggregate([
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          reported: { $sum: { $cond: [{ $eq: ['$status', 'REPORTED'] }, 1, 0] } },
+          aiTriaged: { $sum: { $cond: [{ $eq: ['$status', 'AI_TRIAGED'] }, 1, 0] } },
+          inProgress: { $sum: { $cond: [{ $eq: ['$status', 'IN_PROGRESS'] }, 1, 0] } },
+          resolved: { $sum: { $cond: [{ $eq: ['$status', 'RESOLVED'] }, 1, 0] } },
+          rejected: { $sum: { $cond: [{ $eq: ['$status', 'REJECTED'] }, 1, 0] } },
+          totalSupports: { $sum: { $ifNull: ['$supportCount', 1] } },
+        },
+      },
+    ]);
+
+    const total = stats?.total ?? 0;
+    const reported = stats?.reported ?? 0;
+    const aiTriaged = stats?.aiTriaged ?? 0;
+    const inProgress = stats?.inProgress ?? 0;
+    const resolved = stats?.resolved ?? 0;
+    const rejected = stats?.rejected ?? 0;
+    const totalSupports = stats?.totalSupports ?? 0;
+    const resolutionRate = total > 0 ? `${Math.round((resolved / total) * 100)}%` : '0%';
+
+    return {
+      total,
+      reported,
+      aiTriaged,
+      inProgress,
+      resolved,
+      rejected,
+      totalSupports,
+      resolutionRate,
+    };
+  }
+
 
   /**
    * Retrieves a single grievance by ID or tracking number.
