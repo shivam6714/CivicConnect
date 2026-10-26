@@ -57,12 +57,20 @@ export const verifyOtpSchema = z.object({
 
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;
 
+export const adminLoginSchema = z.object({
+  adminId: z.string().trim().min(1, 'Admin identifier is required'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+export type AdminLoginInput = z.infer<typeof adminLoginSchema>;
+
 export interface VerifyOtpResponse {
   success: boolean;
   message: string;
   token: string;
   user: CitizenUser;
 }
+
 
 /**
  * Citizen User representation.

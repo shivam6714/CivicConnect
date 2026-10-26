@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User } from '../types/user';
 import { authService, RequestOtpResponse } from '../services/authService';
-import { DEMO_ADMIN_ACCOUNTS, DEMO_CITIZEN_ACCOUNT } from '../data/mockUsers';
 
 export interface OtpRequestResult extends RequestOtpResponse {}
 
@@ -18,7 +17,8 @@ interface AuthContextType {
     wardNumber?: number
   ) => Promise<User>;
   logout: () => Promise<void>;
-  switchDevRole: (roleKey: 'city_admin' | 'citizen') => void;
+  switchDevRole: (roleKey: 'city_admin' | 'citizen') => Promise<void>;
+  switchToCitizen: () => User;
   isCityAdmin: boolean;
   isCitizen: boolean;
 }
@@ -30,7 +30,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Restore session on mount if a valid session exists
+    // Restore session on mount if a cryptographically valid token and session exist
     try {
       const activeUser = authService.getCurrentUser();
       setUser(activeUser);
@@ -41,7 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     }
 
-    // Listen for session expiration events dispatched by apiClient
+    // Listen for session expiration events dispatched by apiClient or logout
     const handleSessionExpired = () => {
       setUser(null);
     };
@@ -98,19 +98,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const switchDevRole = (roleKey: 'city_admin' | 'citizen') => {
-    let targetUser: User;
-    if (roleKey === 'city_admin') {
-      targetUser = DEMO_ADMIN_ACCOUNTS[0].user;
-    } else {
-      targetUser = DEMO_CITIZEN_ACCOUNT.user;
-    }
-    authService.setDemoSession(targetUser);
-    setUser({ ...targetUser });
+  const switchToCitizen = (): User => {
+    const citizenUser = authService.switchToCitizenSession();
+    setUser(citizenUser);
+    return citizenUser;
   };
 
-  const isCityAdmin = user?.role === 'CITY_ADMIN' || user?.role === 'admin';
-  const isCitizen = user?.role === 'CITIZEN' || user?.role === 'citizen';
+  /**
+   * Safe role-switching handler:
+   * Enforces that switching roles updates authentication state safely and persists it consistently.
+   * Completely destroys stale admin tokens before transitioning to citizen mode to prevent token leakage.
+   */
+  const switchDevRole = async (roleKey: 'city_admin' | 'citizen'): Promise<void> => {
+    setIsLoading(true);
+    try {
+      if (roleKey === 'city_admin') {
+        const adminUser = await authService.adminLogin('cityadmin@civicconnect.demo', 'CityAdmin123!');
+        setUser(adminUser);
+      } else {
+        switchToCitizen();
+      }
+    } catch (err) {
+      console.warn('switchDevRole failed:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const isCityAdmin = user?.role === 'CITY_ADMIN';
+  const isCitizen = user?.role === 'CITIZEN';
 
   return (
     <AuthContext.Provider
@@ -123,6 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         verifyCitizenOtp,
         logout,
         switchDevRole,
+        switchToCitizen,
         isCityAdmin,
         isCitizen,
       }}

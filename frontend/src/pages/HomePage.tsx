@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { grievanceService } from '../services/grievanceService';
-import { Grievance } from '../types/grievance';
+import { Grievance, PublicGrievanceStats } from '../types/grievance';
 import { GrievanceCard } from '../components/grievance/GrievanceCard';
 import { Button } from '../components/common/Button';
 import { Card } from '../components/common/Card';
@@ -16,15 +16,34 @@ import {
 
 export const HomePage: React.FC = () => {
   const [grievances, setGrievances] = useState<Grievance[]>([]);
+  const [stats, setStats] = useState<PublicGrievanceStats>({
+    total: 0,
+    reported: 0,
+    aiTriaged: 0,
+    inProgress: 0,
+    resolved: 0,
+    rejected: 0,
+    totalSupports: 0,
+    resolutionRate: '0%',
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadData = async () => {
       try {
-        const data = await grievanceService.getGrievances();
+        // Fetch real public aggregate statistics from backend database
+        const publicStats = await grievanceService.getPublicStats();
+        setStats(publicStats);
+      } catch (err) {
+        console.error('Failed to load public statistics', err);
+      }
+
+      try {
+        // Fetch real geo-anchored public grievances (strictly omitting private citizen data)
+        const data = await grievanceService.getPublicMapGrievances();
         setGrievances(data);
       } catch (err) {
-        console.error('Failed to load grievances', err);
+        console.error('Failed to load public grievances feed', err);
       } finally {
         setLoading(false);
       }
@@ -34,15 +53,24 @@ export const HomePage: React.FC = () => {
 
   const handleSupport = async (id: string) => {
     await grievanceService.supportGrievance(id);
-    const updated = await grievanceService.getGrievances();
-    setGrievances(updated);
+    try {
+      const [updatedStats, updatedFeed] = await Promise.all([
+        grievanceService.getPublicStats(),
+        grievanceService.getPublicMapGrievances(),
+      ]);
+      setStats(updatedStats);
+      setGrievances(updatedFeed);
+    } catch (err) {
+      console.warn('Failed to refresh data after support', err);
+    }
   };
 
-  const totalComplaints = grievances.length;
-  const resolvedCount = grievances.filter((g) => g.status === 'RESOLVED').length;
-  const inProgressCount = grievances.filter((g) => g.status === 'IN_PROGRESS').length;
-  const totalSupports = grievances.reduce((sum, g) => sum + g.supportCount, 0);
-  const resolutionRate = totalComplaints > 0 ? `${Math.round((resolvedCount / totalComplaints) * 100)}%` : '0%';
+  const totalComplaints = stats.total;
+  const resolvedCount = stats.resolved;
+  const inProgressCount = stats.inProgress;
+  const totalSupports = stats.totalSupports;
+  const resolutionRate = stats.resolutionRate;
+
 
   return (
     <div className="space-y-10 pb-12">

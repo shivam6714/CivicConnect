@@ -144,6 +144,29 @@ export async function getPublicMapGrievancesController(
 }
 
 /**
+ * Controller for GET /api/complaints/stats (Public aggregate statistics).
+ * Returns anonymous aggregate counts strictly omitting all private citizen information.
+ */
+export async function getPublicStatsController(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const stats = await grievanceService.getPublicStats();
+
+    res.status(200).json({
+      success: true,
+      stats,
+      data: stats,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+/**
  * Controller for GET /api/complaints/:id.
  * Retrieves a single complaint with citizen isolation check.
  */

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CivicConnect Mock Users & Demo Credentials
  *
  * NOTE: This is a frontend prototype data store for demonstration and evaluation only.
@@ -34,7 +34,7 @@ export const DEMO_ADMIN_ACCOUNTS: DemoAdminAccount[] = [
     roleName: 'City Admin',
     description: 'Centralized city-wide administration across all 75 Jammu municipal wards.',
     user: {
-      id: 'usr-city-admin-01',
+      id: '6ad48d2f740e000000000001',
       name: 'Er. Rajesh Khajuria',
       email: 'cityadmin@civicconnect.demo',
       phone: '+91 94191 00001',
@@ -51,7 +51,7 @@ export const DEMO_CITIZEN_ACCOUNT: DemoCitizenAccount = {
   countryCode: '+91',
   demoOtp: '123456',
   user: {
-    id: 'usr-citizen-anil',
+    id: '6ad48d2f740e000000000002',
     name: 'Anil Sharma',
     email: 'anil.sharma@jammu.in',
     phone: '+91 9876543210',

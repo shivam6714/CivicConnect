@@ -129,3 +129,14 @@ export interface CreateGrievanceDTO {
   reporterPhone?: string;
   isAnonymous?: boolean;
 }
+
+export interface PublicGrievanceStats {
+  total: number;
+  reported: number;
+  aiTriaged: number;
+  inProgress: number;
+  resolved: number;
+  rejected: number;
+  totalSupports: number;
+  resolutionRate: string;
+}
