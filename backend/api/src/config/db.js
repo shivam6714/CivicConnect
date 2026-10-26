@@ -7,8 +7,32 @@ export const dbState = {
   error: null,
 };
 
+// Wire dynamic Mongoose connection event listeners
+mongoose.connection.on('connected', () => {
+  dbState.isConnected = true;
+  dbState.mode = 'mongodb';
+  dbState.error = null;
+});
+
+mongoose.connection.on('disconnected', () => {
+  dbState.isConnected = false;
+  dbState.mode = 'disconnected';
+});
+
+mongoose.connection.on('error', (err) => {
+  dbState.isConnected = false;
+  dbState.error = err.message;
+});
+
 /**
- * Connect to MongoDB database with graceful fallback detection
+ * Check if MongoDB connection is active and ready
+ */
+export function isDatabaseReady() {
+  return mongoose.connection.readyState === 1;
+}
+
+/**
+ * Connect to MongoDB database
  */
 export async function connectDB() {
   const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/civicconnect';
@@ -16,7 +40,7 @@ export async function connectDB() {
 
   try {
     const conn = await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 2500, // Quick timeout to detect local daemon
+      serverSelectionTimeoutMS: 5000,
     });
 
     dbState.isConnected = true;
@@ -26,13 +50,11 @@ export async function connectDB() {
     return conn;
   } catch (error) {
     dbState.isConnected = false;
-    dbState.mode = 'memory-fallback';
+    dbState.mode = 'disconnected';
     dbState.error = error.message;
 
     console.warn(`[MongoDB] Warning: Could not connect to MongoDB at "${uri}".`);
     console.warn(`[MongoDB] Reason: ${error.message}`);
-    console.warn('[MongoDB] Activating in-memory storage fallback so backend endpoints remain fully operational and testable.');
-    console.warn('[MongoDB] To persist to a real database, ensure MongoDB is running or configure MONGODB_URI in backend/api/.env with a valid MongoDB connection string.');
     return null;
   }
 }

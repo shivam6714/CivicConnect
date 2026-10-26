@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 import { Grievance, ALLOWED_CATEGORIES, ALLOWED_STATUSES, ALLOWED_PRIORITIES } from '../models/Grievance.js';
-import { dbState } from '../config/db.js';
+import { isDatabaseReady } from '../config/db.js';
 
-// In-memory fallback repository when local MongoDB daemon is not running
+// In-memory fallback repository when database is not connected
 const memoryComplaintsStore = [];
 
 /**
@@ -14,6 +14,13 @@ function generateTrackingNumber() {
 }
 
 /**
+ * Helper to escape special characters in user search string for regex safety
+ */
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Validate coordinates helper
  */
 function validateCoordinates(location) {
@@ -21,27 +28,32 @@ function validateCoordinates(location) {
 
   const { latitude, longitude } = location;
 
-  if (latitude === undefined && longitude === undefined) {
+  // Both empty/null -> valid (no location provided)
+  const isLatEmpty = latitude === undefined || latitude === null || latitude === '';
+  const isLngEmpty = longitude === undefined || longitude === null || longitude === '';
+
+  if (isLatEmpty && isLngEmpty) {
     return null;
   }
 
-  if (latitude === undefined || longitude === undefined) {
-    return 'Both latitude and longitude must be provided together';
+  // Provided only one coordinate -> invalid
+  if (isLatEmpty || isLngEmpty) {
+    return 'Both latitude and longitude must be provided together.';
   }
 
-  const lat = Number(latitude);
-  const lng = Number(longitude);
+  const lat = typeof latitude === 'number' ? latitude : Number(latitude);
+  const lng = typeof longitude === 'number' ? longitude : Number(longitude);
 
   if (Number.isNaN(lat) || Number.isNaN(lng)) {
-    return 'Coordinates must be valid numbers';
+    return 'Coordinates must be valid numbers.';
   }
 
   if (lat < -90 || lat > 90) {
-    return 'Latitude must be between -90 and 90 degrees';
+    return 'Latitude must be between -90 and 90 degrees.';
   }
 
   if (lng < -180 || lng > 180) {
-    return 'Longitude must be between -180 and 180 degrees';
+    return 'Longitude must be between -180 and 180 degrees.';
   }
 
   return null;
@@ -145,18 +157,32 @@ export async function createComplaint(req, res, next) {
           message: coordError,
         });
       }
-      finalLocation = {
-        latitude: Number(location.latitude),
-        longitude: Number(location.longitude),
-      };
-      locationPoint = {
-        type: 'Point',
-        coordinates: [finalLocation.longitude, finalLocation.latitude],
-      };
+
+      const isLatEmpty = location.latitude === undefined || location.latitude === null || location.latitude === '';
+      const isLngEmpty = location.longitude === undefined || location.longitude === null || location.longitude === '';
+
+      if (!isLatEmpty && !isLngEmpty) {
+        finalLocation = {
+          latitude: Number(location.latitude),
+          longitude: Number(location.longitude),
+        };
+        locationPoint = {
+          type: 'Point',
+          coordinates: [finalLocation.longitude, finalLocation.latitude],
+        };
+      }
     }
 
     // 5. Structure ward data
-    const finalWard = ward || (wardId ? { id: Number(wardId), number: Number(wardId), name: `Ward ${wardId}`, zone: 'Jammu' } : null);
+    let finalWard = null;
+    if (ward && typeof ward === 'object') {
+      finalWard = ward;
+    } else if (wardId !== undefined && wardId !== null) {
+      const wid = parseInt(wardId, 10);
+      if (!Number.isNaN(wid)) {
+        finalWard = { id: wid, number: wid, name: `Ward ${wid}`, zone: 'Jammu' };
+      }
+    }
 
     const trackingNumber = generateTrackingNumber();
     const timeline = [
@@ -206,7 +232,7 @@ export async function createComplaint(req, res, next) {
     };
 
     // 6. Persist to MongoDB if connected, else fallback store
-    if (dbState.isConnected) {
+    if (isDatabaseReady()) {
       const doc = await Grievance.create(complaintData);
       return res.status(201).json({
         success: true,
@@ -254,7 +280,7 @@ export async function getComplaints(req, res, next) {
     const searchText = (searchQuery || q || '').trim().toLowerCase();
 
     // 1. Live MongoDB Query
-    if (dbState.isConnected) {
+    if (isDatabaseReady()) {
       const filter = {};
 
       if (status) {
@@ -267,14 +293,18 @@ export async function getComplaints(req, res, next) {
         filter.priority = String(priority).toUpperCase();
       }
       if (wardId) {
-        filter['ward.id'] = Number(wardId);
+        const wid = parseInt(wardId, 10);
+        if (!Number.isNaN(wid)) {
+          filter['ward.id'] = wid;
+        }
       }
       if (searchText) {
+        const escapedSearch = escapeRegex(searchText);
         filter.$or = [
-          { title: { $regex: searchText, $options: 'i' } },
-          { description: { $regex: searchText, $options: 'i' } },
-          { trackingNumber: { $regex: searchText, $options: 'i' } },
-          { address: { $regex: searchText, $options: 'i' } },
+          { title: { $regex: escapedSearch, $options: 'i' } },
+          { description: { $regex: escapedSearch, $options: 'i' } },
+          { trackingNumber: { $regex: escapedSearch, $options: 'i' } },
+          { address: { $regex: escapedSearch, $options: 'i' } },
         ];
       }
 
@@ -359,10 +389,9 @@ export async function getComplaintById(req, res, next) {
     const trimmedId = id.trim();
 
     // 1. Live MongoDB lookup
-    if (dbState.isConnected) {
+    if (isDatabaseReady()) {
       let doc = null;
 
-      // Check if it's a valid tracking number format (e.g. JMC-2026-XXXX)
       if (trimmedId.startsWith('JMC-')) {
         doc = await Grievance.findOne({ trackingNumber: trimmedId });
       } else if (mongoose.Types.ObjectId.isValid(trimmedId)) {
@@ -414,6 +443,7 @@ export async function getComplaintById(req, res, next) {
 /**
  * PATCH /api/complaints/:id/status
  * Update complaint status with audit timeline entry
+ * CRITICAL: User-provided title, description, category, and location are protected and never mutated here.
  */
 export async function updateComplaintStatus(req, res, next) {
   try {
@@ -465,7 +495,7 @@ export async function updateComplaintStatus(req, res, next) {
     };
 
     // 2. Live MongoDB Update
-    if (dbState.isConnected) {
+    if (isDatabaseReady()) {
       const query = trimmedId.startsWith('JMC-')
         ? { trackingNumber: trimmedId }
         : mongoose.Types.ObjectId.isValid(trimmedId)
@@ -489,15 +519,17 @@ export async function updateComplaintStatus(req, res, next) {
         });
       }
 
+      // Update ONLY status and lifecycle properties (preserve user title, description, category, location)
       doc.status = upperStatus;
       doc.timeline.push(timelineEvent);
 
-      if (upperStatus === 'RESOLVED' && resolutionEvidence) {
+      if (upperStatus === 'RESOLVED') {
+        const evidence = typeof resolutionEvidence === 'object' && resolutionEvidence !== null ? resolutionEvidence : {};
         doc.resolutionEvidence = {
-          imageUrl: resolutionEvidence.imageUrl || null,
-          notes: resolutionEvidence.notes || note || 'Resolved by municipal team',
+          imageUrl: evidence.imageUrl || null,
+          notes: evidence.notes || note || 'Resolved by municipal team',
           resolvedAt: new Date(),
-          officerName: resolutionEvidence.officerName || actor || 'Municipal Officer',
+          officerName: evidence.officerName || actor || 'Municipal Officer',
         };
       }
 
@@ -530,12 +562,12 @@ export async function updateComplaintStatus(req, res, next) {
       updatedAt: new Date(),
       timeline: [...current.timeline, timelineEvent],
       resolutionEvidence:
-        upperStatus === 'RESOLVED' && resolutionEvidence
+        upperStatus === 'RESOLVED'
           ? {
-              imageUrl: resolutionEvidence.imageUrl || null,
-              notes: resolutionEvidence.notes || note || 'Resolved by municipal team',
+              imageUrl: (typeof resolutionEvidence === 'object' && resolutionEvidence?.imageUrl) || null,
+              notes: (typeof resolutionEvidence === 'object' && resolutionEvidence?.notes) || note || 'Resolved by municipal team',
               resolvedAt: new Date(),
-              officerName: resolutionEvidence.officerName || actor || 'Municipal Officer',
+              officerName: (typeof resolutionEvidence === 'object' && resolutionEvidence?.officerName) || actor || 'Municipal Officer',
             }
           : current.resolutionEvidence,
     };

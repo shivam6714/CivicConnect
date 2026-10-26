@@ -1,23 +1,37 @@
 /**
- * Automated Verification Test Suite for CivicConnect Backend Foundation
- * Tests all required endpoints, validation guards, and error responses.
+ * Comprehensive Backend Audit & Stabilization Test Suite
+ * CivicConnect — Municipal Grievance Triage System
+ *
+ * Verifies all 8 audit points:
+ * 1. Health endpoint accuracy (200 healthy when connected vs 503 unhealthy when disconnected)
+ * 2. Persistence in MongoDB Atlas
+ * 3. Validation guards (title, description length, categories, coordinates, regex escaping)
+ * 4. Filtering and pagination
+ * 5. Status update lifecycle and rejection of arbitrary status values
+ * 6. Protection & immutability of user-provided content (category, description, title) when prediction fields are added
+ * 7. Error handling for malformed JSON, missing records, and unhandled routes
+ * 8. Standardized API response structure across all endpoints
  */
+
+import 'dotenv/config';
+process.env.NODE_ENV = 'test';
 
 import http from 'http';
 import mongoose from 'mongoose';
 import app from './server.js';
-import { connectDB } from './config/db.js';
+import { connectDB, isDatabaseReady } from './config/db.js';
+import { Grievance } from './models/Grievance.js';
 
 const TEST_PORT = 5055;
 let server;
-let baseUrl = `http://127.0.0.1:${TEST_PORT}`;
+const baseUrl = `http://127.0.0.1:${TEST_PORT}`;
 
-const results = [];
+const testResults = [];
 
 function recordTest(name, passed, details = '') {
-  results.push({ name, passed, details });
-  const mark = passed ? '✅ PASS' : '❌ FAIL';
-  console.log(`${mark}: ${name} ${details ? `(${details})` : ''}`);
+  testResults.push({ name, passed, details });
+  const badge = passed ? '✅ PASS' : '❌ FAIL';
+  console.log(`${badge}: ${name} ${details ? `(${details})` : ''}`);
 }
 
 async function apiRequest(endpoint, options = {}) {
@@ -39,42 +53,58 @@ async function apiRequest(endpoint, options = {}) {
     data = text;
   }
 
-  return { status: response.status, data, headers: response.headers };
+  return { status: response.status, data };
 }
 
-async function runTests() {
+async function runAuditSuite() {
   console.log('\n======================================================');
-  console.log('   CivicConnect Backend Foundation Verification Suite   ');
+  console.log('   CivicConnect Backend Stabilization & Audit Suite   ');
   console.log('======================================================\n');
 
+  let testComplaintId = null;
+  let testTrackingNumber = null;
+  const originalDescription = 'Deep road crater outside Gol Market gate 2 causing severe traffic risk.';
+  const originalTitle = 'Severe pothole crater near Gol Market gate 2';
+  const originalCategory = 'POTHOLE_ROAD';
+
   try {
-    // 1. Test GET /health
-    const health = await apiRequest('/health');
+    // -------------------------------------------------------------------
+    // Task 7: Health Endpoint with Active Database
+    // -------------------------------------------------------------------
+    const healthRes = await apiRequest('/health');
+    const isDbConnected = isDatabaseReady();
     recordTest(
-      'GET /health returns 200 and health metadata',
-      health.status === 200 && health.data.status === 'healthy',
-      `DB mode: ${health.data.database?.mode}`
+      'Task 7: GET /health accurately reports healthy when DB is connected (200)',
+      healthRes.status === 200 &&
+        healthRes.data.status === 'healthy' &&
+        healthRes.data.database.connected === isDbConnected &&
+        healthRes.data.database.mode === 'mongodb',
+      `ReadyState: ${healthRes.data.database.readyState}, Mode: ${healthRes.data.database.mode}`
     );
 
-    // 2. Test GET / root
-    const root = await apiRequest('/');
+    // Root Welcome Endpoint
+    const rootRes = await apiRequest('/');
     recordTest(
-      'GET / root route returns welcome metadata',
-      root.status === 200 && root.data.service.includes('CivicConnect')
+      'Task 1: GET / returns API Gateway information and route catalog (200)',
+      rootRes.status === 200 &&
+        rootRes.data.service.includes('CivicConnect') &&
+        rootRes.data.endpoints.complaints === '/api/complaints'
     );
 
-    // 3. Test POST /api/complaints (Valid creation with coordinates)
-    const validComplaintPayload = {
-      title: 'Severe pothole crater near Gol Market gate 2',
-      description: 'Vehicles swerving into oncoming traffic causing immediate road hazard after rainfall.',
-      category: 'POTHOLE_ROAD',
+    // -------------------------------------------------------------------
+    // Task 2 & 3: Complaint Creation & Database Persistence
+    // -------------------------------------------------------------------
+    const createPayload = {
+      title: originalTitle,
+      description: originalDescription,
+      category: originalCategory,
       priority: 'HIGH',
       location: {
         latitude: 32.7088,
         longitude: 74.8631,
       },
-      address: 'Near Gate 2, Gol Market, Gandhi Nagar, Jammu',
-      landmark: 'Opposite State Bank',
+      address: 'Gate 2, Gol Market, Gandhi Nagar, Jammu',
+      landmark: 'Near State Bank',
       wardId: 20,
       reporterName: 'Anil Sharma',
       reporterPhone: '+91 94191 00001',
@@ -83,221 +113,364 @@ async function runTests() {
 
     const createRes = await apiRequest('/api/complaints', {
       method: 'POST',
-      body: JSON.stringify(validComplaintPayload),
+      body: JSON.stringify(createPayload),
     });
 
-    const createdComplaint = createRes.data.data;
+    const createdData = createRes.data?.data;
+    testComplaintId = createdData?.id;
+    testTrackingNumber = createdData?.trackingNumber;
+
     recordTest(
-      'POST /api/complaints creates complaint with coordinates (201)',
+      'Task 2: POST /api/complaints creates valid complaint with tracking number (201)',
       createRes.status === 201 &&
-        createdComplaint?.trackingNumber?.startsWith('JMC-2026-') &&
-        createdComplaint?.status === 'REPORTED',
-      `Tracking: ${createdComplaint?.trackingNumber}`
+        testTrackingNumber?.startsWith('JMC-2026-') &&
+        createdData?.status === 'REPORTED',
+      `ID: ${testComplaintId}, Tracking: ${testTrackingNumber}`
     );
 
-    // 4. Test POST /api/complaints (Valid creation WITHOUT coordinates - optional location)
-    const noLocationPayload = {
-      title: 'Water pipe leak in lane 4',
-      description: 'Underground drinking water pipeline burst wasting clean water across the street.',
+    // Verify persistence directly in MongoDB Atlas via Mongoose
+    if (isDbConnected) {
+      const persistedInDb = await Grievance.findById(testComplaintId);
+      recordTest(
+        'Task 3: Complaint is genuinely persisted in MongoDB database',
+        persistedInDb !== null && persistedInDb.trackingNumber === testTrackingNumber,
+        `Persisted in collection: grievances, _id: ${persistedInDb?._id}`
+      );
+    }
+
+    // -------------------------------------------------------------------
+    // Task 2: Optional Location (Complaints submitted without coordinates)
+    // -------------------------------------------------------------------
+    const noCoordPayload = {
+      title: 'Water supply contaminated in lane 5',
+      description: 'Tap water is muddy and foul-smelling since this morning.',
       category: 'WATER_SUPPLY',
     };
 
-    const createNoLocRes = await apiRequest('/api/complaints', {
+    const noCoordRes = await apiRequest('/api/complaints', {
       method: 'POST',
-      body: JSON.stringify(noLocationPayload),
+      body: JSON.stringify(noCoordPayload),
     });
 
     recordTest(
-      'POST /api/complaints permits optional location (201)',
-      createNoLocRes.status === 201 &&
-        createNoLocRes.data.data?.location === null &&
-        createNoLocRes.data.data?.category === 'WATER_SUPPLY',
-      `Category: ${createNoLocRes.data.data?.category}`
+      'Task 2: POST /api/complaints permits complaint without coordinates',
+      noCoordRes.status === 201 &&
+        noCoordRes.data?.data?.location === null &&
+        noCoordRes.data?.data?.category === 'WATER_SUPPLY',
+      `Tracking: ${noCoordRes.data?.data?.trackingNumber}`
     );
 
-    // 5. Test Validation: Empty Title
+    // Clean up second test complaint if persisted
+    if (isDbConnected && noCoordRes.data?.data?.id) {
+      await Grievance.findByIdAndDelete(noCoordRes.data.data.id);
+    }
+
+    // -------------------------------------------------------------------
+    // Task 1: Validation Rules (Title, Description, Category, Coordinates)
+    // -------------------------------------------------------------------
     const emptyTitleRes = await apiRequest('/api/complaints', {
       method: 'POST',
       body: JSON.stringify({
-        title: '',
-        description: 'Valid description of at least ten characters',
+        title: '   ',
+        description: 'Valid description that has plenty of length to pass',
       }),
     });
     recordTest(
-      'POST /api/complaints rejects empty title with 400',
+      'Task 1: POST /api/complaints rejects empty/whitespace title (400)',
       emptyTitleRes.status === 400 && emptyTitleRes.data.error === 'VALIDATION_ERROR'
     );
 
-    // 6. Test Validation: Description too short (< 10 chars)
     const shortDescRes = await apiRequest('/api/complaints', {
       method: 'POST',
       body: JSON.stringify({
-        title: 'Valid Title Here',
-        description: 'Short',
+        title: 'Valid Complaint Title',
+        description: 'Too short',
       }),
     });
     recordTest(
-      'POST /api/complaints rejects description < 10 chars with 400',
+      'Task 1: POST /api/complaints rejects description < 10 characters (400)',
       shortDescRes.status === 400 && shortDescRes.data.error === 'VALIDATION_ERROR'
     );
 
-    // 7. Test Validation: Invalid Category
     const invalidCatRes = await apiRequest('/api/complaints', {
       method: 'POST',
       body: JSON.stringify({
-        title: 'Valid Title Here',
-        description: 'Valid description that has plenty of length to pass',
-        category: 'NOT_A_REAL_CATEGORY',
+        title: 'Valid Complaint Title',
+        description: 'Valid description with sufficient length for testing.',
+        category: 'INVALID_CATEGORY_NAME',
       }),
     });
     recordTest(
-      'POST /api/complaints rejects invalid category with 400',
+      'Task 1: POST /api/complaints rejects invalid category (400)',
       invalidCatRes.status === 400 && invalidCatRes.data.message.includes('Allowed categories')
     );
 
-    // 8. Test Validation: Invalid Coordinates (out of bounds)
-    const invalidCoordRes = await apiRequest('/api/complaints', {
+    const invalidLatRes = await apiRequest('/api/complaints', {
       method: 'POST',
       body: JSON.stringify({
-        title: 'Valid Title Here',
-        description: 'Valid description that has plenty of length to pass',
-        location: {
-          latitude: 95.0, // Invalid latitude > 90
-          longitude: 74.8,
-        },
+        title: 'Valid Complaint Title',
+        description: 'Valid description with sufficient length for testing.',
+        location: { latitude: 95.5, longitude: 74.8 },
       }),
     });
     recordTest(
-      'POST /api/complaints rejects latitude > 90 with 400',
-      invalidCoordRes.status === 400 && invalidCoordRes.data.message.includes('Latitude must be between')
+      'Task 1: POST /api/complaints rejects latitude > 90 (400)',
+      invalidLatRes.status === 400 && invalidLatRes.data.message.includes('Latitude must be between')
     );
 
-    // 9. Test GET /api/complaints (List & Pagination)
-    const listRes = await apiRequest('/api/complaints');
+    const missingOneCoordRes = await apiRequest('/api/complaints', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Valid Complaint Title',
+        description: 'Valid description with sufficient length for testing.',
+        location: { latitude: 32.7 }, // Missing longitude
+      }),
+    });
     recordTest(
-      'GET /api/complaints lists complaints with total and pagination (200)',
+      'Task 1: POST /api/complaints rejects location with only one coordinate (400)',
+      missingOneCoordRes.status === 400 && missingOneCoordRes.data.message.includes('Both latitude and longitude')
+    );
+
+    // -------------------------------------------------------------------
+    // Task 4: Pagination, Filtering, and Safe Search
+    // -------------------------------------------------------------------
+    const listRes = await apiRequest('/api/complaints?page=1&limit=5');
+    recordTest(
+      'Task 4: GET /api/complaints returns paginated list with total count (200)',
       listRes.status === 200 &&
         Array.isArray(listRes.data.data) &&
-        listRes.data.total >= 2,
-      `Total count: ${listRes.data.total}`
+        typeof listRes.data.total === 'number' &&
+        listRes.data.page === 1,
+      `Returned count: ${listRes.data.count}, Total: ${listRes.data.total}`
     );
 
-    // 10. Test GET /api/complaints?category=POTHOLE_ROAD (Filter)
-    const filterCatRes = await apiRequest('/api/complaints?category=POTHOLE_ROAD');
+    const filterCategoryRes = await apiRequest('/api/complaints?category=POTHOLE_ROAD');
     recordTest(
-      'GET /api/complaints filters by category (200)',
-      filterCatRes.status === 200 &&
-        filterCatRes.data.data.every((c) => c.category === 'POTHOLE_ROAD'),
-      `Matches: ${filterCatRes.data.count}`
+      'Task 4: GET /api/complaints?category=POTHOLE_ROAD filters correctly (200)',
+      filterCategoryRes.status === 200 &&
+        filterCategoryRes.data.data.every((c) => c.category === 'POTHOLE_ROAD'),
+      `Matches: ${filterCategoryRes.data.count}`
     );
 
-    // 11. Test GET /api/complaints?searchQuery=Gol+Market (Search)
-    const searchRes = await apiRequest('/api/complaints?searchQuery=Gol+Market');
+    const searchRes = await apiRequest('/api/complaints?q=Gol+Market');
     recordTest(
-      'GET /api/complaints searches text in title/description (200)',
+      'Task 4: GET /api/complaints?q=... performs case-insensitive text search (200)',
       searchRes.status === 200 && searchRes.data.count >= 1,
       `Matches: ${searchRes.data.count}`
     );
 
-    // 12. Test GET /api/complaints/:id by ID
-    const targetId = createdComplaint.id;
-    const getByIdRes = await apiRequest(`/api/complaints/${targetId}`);
+    // Regex safety test: special characters such as ( or [ must not crash search
+    const regexSearchRes = await apiRequest('/api/complaints?q=(Gate+2)');
     recordTest(
-      'GET /api/complaints/:id retrieves complaint by ID (200)',
-      getByIdRes.status === 200 && getByIdRes.data.data.id === targetId,
-      `Retrieved: ${getByIdRes.data.data.title}`
+      'Task 1: GET /api/complaints?q=(Gate+2) safely handles regex special characters without error (200)',
+      regexSearchRes.status === 200 && Array.isArray(regexSearchRes.data.data),
+      `Status: ${regexSearchRes.status}`
     );
 
-    // 13. Test GET /api/complaints/:id by tracking number
-    const trackingNum = createdComplaint.trackingNumber;
-    const getByTrackingRes = await apiRequest(`/api/complaints/${trackingNum}`);
+    // -------------------------------------------------------------------
+    // Task 2: Retrieval by ID and Tracking Number
+    // -------------------------------------------------------------------
+    const getByIdRes = await apiRequest(`/api/complaints/${testComplaintId}`);
     recordTest(
-      'GET /api/complaints/:id retrieves complaint by tracking number (200)',
-      getByTrackingRes.status === 200 && getByTrackingRes.data.data.trackingNumber === trackingNum
+      'Task 2: GET /api/complaints/:id retrieves by MongoDB ID (200)',
+      getByIdRes.status === 200 && getByIdRes.data.data.id === testComplaintId,
+      `Title: "${getByIdRes.data.data.title}"`
     );
 
-    // 14. Test GET /api/complaints/:id with missing ID (404)
-    const notFoundRes = await apiRequest('/api/complaints/JMC-2026-999999');
+    const getByTrackingRes = await apiRequest(`/api/complaints/${testTrackingNumber}`);
     recordTest(
-      'GET /api/complaints/:id returns 404 for non-existent complaint',
-      notFoundRes.status === 404 && notFoundRes.data.error === 'NOT_FOUND'
+      'Task 2: GET /api/complaints/:id retrieves by JMC tracking number (200)',
+      getByTrackingRes.status === 200 && getByTrackingRes.data.data.trackingNumber === testTrackingNumber
     );
 
-    // 15. Test PATCH /api/complaints/:id/status (Valid update)
-    const patchRes = await apiRequest(`/api/complaints/${targetId}/status`, {
+    const missingIdRes = await apiRequest('/api/complaints/JMC-2026-999999');
+    recordTest(
+      'Task 1: GET /api/complaints/:id returns 404 for non-existent complaint',
+      missingIdRes.status === 404 && missingIdRes.data.error === 'NOT_FOUND'
+    );
+
+    // -------------------------------------------------------------------
+    // Task 5: Status Updates and Rejection of Arbitrary Invalid Values
+    // -------------------------------------------------------------------
+    const validPatchRes = await apiRequest(`/api/complaints/${testComplaintId}/status`, {
       method: 'PATCH',
       body: JSON.stringify({
         status: 'IN_PROGRESS',
-        note: 'Field engineer assigned to survey pothole',
-        actor: 'Municipal Engineer Sharma',
+        note: 'Field crew dispatched with patch materials',
+        actor: 'Municipal Engineer Gupta',
       }),
     });
 
-    const updated = patchRes.data.data;
-    const lastTimeline = updated?.timeline?.[updated.timeline.length - 1];
+    const updatedData = validPatchRes.data?.data;
+    const latestTimeline = updatedData?.timeline?.[updatedData.timeline.length - 1];
 
     recordTest(
-      'PATCH /api/complaints/:id/status updates status and appends timeline (200)',
-      patchRes.status === 200 &&
-        updated?.status === 'IN_PROGRESS' &&
-        lastTimeline?.status === 'IN_PROGRESS' &&
-        lastTimeline?.note === 'Field engineer assigned to survey pothole',
-      `New status: ${updated?.status}`
+      'Task 5: PATCH /api/complaints/:id/status updates status and appends timeline (200)',
+      validPatchRes.status === 200 &&
+        updatedData?.status === 'IN_PROGRESS' &&
+        latestTimeline?.status === 'IN_PROGRESS' &&
+        latestTimeline?.note === 'Field crew dispatched with patch materials',
+      `Status: ${updatedData?.status}`
     );
 
-    // 16. Test PATCH /api/complaints/:id/status (Invalid status value)
-    const invalidStatusRes = await apiRequest(`/api/complaints/${targetId}/status`, {
+    const invalidStatusRes = await apiRequest(`/api/complaints/${testComplaintId}/status`, {
       method: 'PATCH',
       body: JSON.stringify({
-        status: 'DISCARDED_FOREVER', // Not in allowed statuses
+        status: 'ARBITRARY_INVALID_STATUS_VALUE',
       }),
     });
-
     recordTest(
-      'PATCH /api/complaints/:id/status rejects invalid status with 400',
-      invalidStatusRes.status === 400 && invalidStatusRes.data.message.includes('Allowed values')
+      'Task 5: PATCH /api/complaints/:id/status rejects arbitrary invalid status (400)',
+      invalidStatusRes.status === 400 &&
+        invalidStatusRes.data.error === 'VALIDATION_ERROR' &&
+        invalidStatusRes.data.message.includes('Allowed values')
     );
 
-    // 17. Test 404 handler for unknown route
-    const unknownRouteRes = await apiRequest('/api/unknown-endpoint');
+    // -------------------------------------------------------------------
+    // Task 6: Immutability of User Content (Title, Description, Category)
+    // -------------------------------------------------------------------
+    const verifyDocRes = await apiRequest(`/api/complaints/${testComplaintId}`);
+    const verifiedData = verifyDocRes.data?.data;
+
+    const userContentIntact =
+      verifiedData?.title === originalTitle &&
+      verifiedData?.description === originalDescription &&
+      verifiedData?.category === originalCategory &&
+      verifiedData?.location?.latitude === 32.7088 &&
+      verifiedData?.location?.longitude === 74.8631;
+
     recordTest(
-      'Unmatched routes trigger notFoundHandler (404)',
+      'Task 6: User-provided category, description, and location remain strictly intact after status update',
+      userContentIntact,
+      `Category: ${verifiedData?.category}, Status: ${verifiedData?.status}`
+    );
+
+    // Direct ML Prediction Addition Test:
+    // Update ML prediction fields and verify user category/description remain untouched
+    if (isDbConnected) {
+      const grievanceDoc = await Grievance.findById(testComplaintId);
+      grievanceDoc.predictedCategory = 'POTHOLE_ROAD';
+      grievanceDoc.confidence = 0.94;
+      grievanceDoc.modelVersion = 'civic-bert-jmc-v1.0';
+      grievanceDoc.aiTriageMetadata = {
+        processedAt: new Date(),
+        detectedCategory: 'POTHOLE_ROAD',
+        confidence: 0.94,
+        severityScore: 4.5,
+        suggestedDepartment: 'Roads & Buildings (PWD/JMC)',
+        duplicateEvidence: null,
+      };
+      await grievanceDoc.save();
+
+      const fetchWithMlRes = await apiRequest(`/api/complaints/${testComplaintId}`);
+      const mlData = fetchWithMlRes.data?.data;
+
+      const predictionsAdded =
+        mlData?.predictedCategory === 'POTHOLE_ROAD' &&
+        mlData?.confidence === 0.94 &&
+        mlData?.modelVersion === 'civic-bert-jmc-v1.0' &&
+        mlData?.aiTriageMetadata?.suggestedDepartment === 'Roads & Buildings (PWD/JMC)';
+
+      const userFieldsStillIntact =
+        mlData?.category === originalCategory &&
+        mlData?.description === originalDescription &&
+        mlData?.title === originalTitle &&
+        mlData?.location?.latitude === 32.7088 &&
+        mlData?.location?.longitude === 74.8631;
+
+      recordTest(
+        'Task 6: Prediction fields populate while user category, description, and location remain strictly intact',
+        predictionsAdded && userFieldsStillIntact,
+        `User Category: ${mlData?.category}, Predicted: ${mlData?.predictedCategory} (${mlData?.confidence})`
+      );
+    }
+
+    // -------------------------------------------------------------------
+    // Task 1: Error Handling & Reliability (Malformed JSON, 404 Route, Stubs)
+    // -------------------------------------------------------------------
+    const unknownRouteRes = await apiRequest('/api/non-existent-endpoint');
+    recordTest(
+      'Task 1: Unmatched routes return clean 404 response without leaking stack traces',
       unknownRouteRes.status === 404 && unknownRouteRes.data.error === 'NOT_FOUND'
     );
 
-    // 18. Test malformed JSON payload handling
     const malformedJsonRes = await fetch(`${baseUrl}/api/complaints`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: '{"title": "Unclosed string JSON ...',
+      body: '{ "title": "Broken JSON missing closing quote',
     });
     const malformedData = await malformedJsonRes.json();
     recordTest(
-      'Malformed JSON payload returns 400 with clean error',
+      'Task 1: Malformed JSON syntax in request body returns clean 400 error',
       malformedJsonRes.status === 400 && malformedData.error === 'MALFORMED_JSON'
     );
 
+    // Stubs consistent error format (Task 1)
+    const wardStubRes = await apiRequest('/api/wards');
+    recordTest(
+      'Task 1: GET /api/wards stub returns standardized 501 NOT_IMPLEMENTED schema',
+      wardStubRes.status === 501 && wardStubRes.data.error === 'NOT_IMPLEMENTED'
+    );
+
+    const analyticsStubRes = await apiRequest('/api/analytics/overview');
+    recordTest(
+      'Task 1: GET /api/analytics/overview stub returns standardized 501 schema',
+      analyticsStubRes.status === 501 && analyticsStubRes.data.error === 'NOT_IMPLEMENTED'
+    );
+
+    // Clean up test complaint from database before health disconnect test
+    if (isDbConnected && testComplaintId) {
+      await Grievance.findByIdAndDelete(testComplaintId);
+      console.log(`[Test Cleanup] Deleted test complaint ${testComplaintId} from database.`);
+    }
+
+    // -------------------------------------------------------------------
+    // Task 7: Health Endpoint Failure Reporting When DB Disconnected
+    // -------------------------------------------------------------------
+    if (isDbConnected) {
+      console.log('[Test Task 7] Temporarily disconnecting MongoDB to verify 503 unhealthy reporting...');
+      await mongoose.disconnect();
+
+      const disconnectedHealthRes = await apiRequest('/health');
+      recordTest(
+        'Task 7: GET /health returns 503 unhealthy when database dependency is unavailable',
+        disconnectedHealthRes.status === 503 &&
+          disconnectedHealthRes.data.status === 'unhealthy' &&
+          disconnectedHealthRes.data.database.connected === false &&
+          disconnectedHealthRes.data.database.readyState === 0,
+        `Status: ${disconnectedHealthRes.data.status}, HTTP: ${disconnectedHealthRes.status}`
+      );
+
+      // Reconnect database to restore state
+      console.log('[Test Task 7] Restoring MongoDB connection...');
+      await connectDB();
+      const reconnectedHealthRes = await apiRequest('/health');
+      recordTest(
+        'Task 7: GET /health returns 200 healthy after database reconnection',
+        reconnectedHealthRes.status === 200 &&
+          reconnectedHealthRes.data.status === 'healthy' &&
+          reconnectedHealthRes.data.database.connected === true,
+        `Status: ${reconnectedHealthRes.data.status}, HTTP: ${reconnectedHealthRes.status}`
+      );
+    }
+
     console.log('\n======================================================');
-    const totalPassed = results.filter((r) => r.passed).length;
-    console.log(`Summary: ${totalPassed} / ${results.length} tests passed successfully.`);
+    const totalPassed = testResults.filter((r) => r.passed).length;
+    console.log(`Summary: ${totalPassed} / ${testResults.length} audit verification tests passed.`);
     console.log('======================================================\n');
   } catch (err) {
-    console.error('Fatal test error:', err);
-  } finally {
-    if (server) {
-      server.close();
-    }
+    console.error('Fatal test error in audit suite:', err);
   }
 }
 
-// Start test server and run suite
 async function main() {
   await connectDB();
+
   server = app.listen(TEST_PORT, async () => {
-    console.log(`[Test Runner] Started test server on port ${TEST_PORT}`);
-    await runTests();
+    console.log(`[Audit Runner] Test server listening on http://127.0.0.1:${TEST_PORT}`);
+    await runAuditSuite();
     server.close(async () => {
-      console.log('[Test Runner] Test server closed.');
+      console.log('[Audit Runner] Test server closed.');
       if (mongoose.connection.readyState !== 0) {
         await mongoose.disconnect();
       }

@@ -3,11 +3,17 @@
  */
 
 export async function getWards(req, res, next) {
-  // TODO: Retrieve all 75 Jammu municipal wards
-  res.status(501).json({ message: 'Not implemented yet' });
+  res.status(501).json({
+    success: false,
+    error: 'NOT_IMPLEMENTED',
+    message: 'Ward listing endpoint not implemented yet',
+  });
 }
 
 export async function getWardById(req, res, next) {
-  // TODO: Retrieve single ward by number or ID
-  res.status(501).json({ message: 'Not implemented yet' });
+  res.status(501).json({
+    success: false,
+    error: 'NOT_IMPLEMENTED',
+    message: 'Ward retrieval endpoint not implemented yet',
+  });
 }
