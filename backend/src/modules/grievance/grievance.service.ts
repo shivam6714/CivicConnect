@@ -1,9 +1,20 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
-import { GrievanceModel, formatGrievance, type IGrievanceDocument } from './grievance.model.js';
+import {
+  GrievanceModel,
+  formatGrievance,
+  formatPublicMapGrievance,
+  type IGrievanceDocument,
+} from './grievance.model.js';
 import { UserModel } from '../auth/user.model.js';
 import { getJammuWard } from '../../utils/jammuWards.js';
-import type { CreateGrievanceInput, FormattedGrievance } from './grievance.types.js';
+import type {
+  CreateGrievanceInput,
+  FormattedGrievance,
+  UpdateGrievanceStatusInput,
+  GrievanceFilterOptions,
+  PublicMapGrievance,
+} from './grievance.types.js';
 import type { AuthJwtPayload } from '../auth/auth.types.js';
 import { BadRequestError, NotFoundError } from '../../errors/appError.js';
 
@@ -98,6 +109,126 @@ export class GrievanceService {
     });
 
     return docs.map((doc) => formatGrievance(doc, userPayload.sub));
+  }
+
+  /**
+   * Retrieves all grievances across Jammu with administrative filters.
+   * Enforces server-side administrator authorization.
+   */
+  async getAllGrievances(
+    filters?: GrievanceFilterOptions,
+    currentUserId?: string
+  ): Promise<FormattedGrievance[]> {
+    const query: Record<string, unknown> = {};
+
+    if (filters?.status) {
+      query.status = filters.status;
+    }
+
+    if (filters?.category) {
+      query.category = filters.category;
+    }
+
+    if (filters?.wardId && typeof filters.wardId === 'number') {
+      query['ward.id'] = filters.wardId;
+    }
+
+    if (filters?.priority) {
+      query.priority = filters.priority;
+    }
+
+    if (filters?.searchQuery && filters.searchQuery.trim().length > 0) {
+      const escaped = filters.searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
+      query.$or = [
+        { trackingNumber: searchRegex },
+        { title: searchRegex },
+        { description: searchRegex },
+        { address: searchRegex },
+        { 'ward.name': searchRegex },
+      ];
+    }
+
+    const docs = await GrievanceModel.find(query).sort({ createdAt: -1 });
+    return docs.map((doc) => formatGrievance(doc, currentUserId));
+  }
+
+  /**
+   * Retrieves geo-anchored public grievances for the interactive Jammu map.
+   * Strips all citizen identity, phone numbers, and private data.
+   */
+  async getPublicMapGrievances(): Promise<PublicMapGrievance[]> {
+    const docs = await GrievanceModel.find({
+      'location.latitude': { $ne: null, $gte: -90, $lte: 90 },
+      'location.longitude': { $ne: null, $gte: -180, $lte: 180 },
+      $nor: [{ 'location.latitude': 0, 'location.longitude': 0 }],
+    }).sort({ createdAt: -1 });
+
+    return docs.map(formatPublicMapGrievance);
+  }
+
+  /**
+   * Retrieves a single grievance by ID or tracking number.
+   */
+  async getGrievanceById(id: string, currentUserId?: string): Promise<FormattedGrievance> {
+    const isObjectId = mongoose.isValidObjectId(id);
+    const query = isObjectId ? { _id: id } : { trackingNumber: id };
+
+    const doc = await GrievanceModel.findOne(query);
+    if (!doc) {
+      throw new NotFoundError(`Grievance not found with identifier: ${id}`);
+    }
+
+    return formatGrievance(doc, currentUserId);
+  }
+
+  /**
+   * Updates grievance status with timeline audit record.
+   * Enforces valid status transitions and persists changes in MongoDB.
+   */
+  async updateGrievanceStatus(
+    id: string,
+    input: UpdateGrievanceStatusInput,
+    actorPayload: AuthJwtPayload
+  ): Promise<FormattedGrievance> {
+    const isObjectId = mongoose.isValidObjectId(id);
+    const query = isObjectId ? { _id: id } : { trackingNumber: id };
+
+    const doc = await GrievanceModel.findOne(query);
+    if (!doc) {
+      throw new NotFoundError(`Grievance not found with identifier: ${id}`);
+    }
+
+    const previousStatus = doc.status;
+    const newStatus = input.status;
+
+    // Determine actor title based on role
+    const actorName =
+      actorPayload.role === 'admin'
+        ? 'City Administrator'
+        : actorPayload.role === 'official'
+        ? 'Municipal Officer'
+        : 'Civic Authority';
+
+    const timelineEvent = {
+      id: `tl-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      status: newStatus,
+      timestamp: new Date(),
+      actor: actorName,
+      note: input.note?.trim() || `Status updated from ${previousStatus} to ${newStatus}`,
+    };
+
+    doc.status = newStatus;
+    if (newStatus === 'RESOLVED') {
+      doc.resolvedAt = new Date();
+    } else if (previousStatus === 'RESOLVED') {
+      doc.resolvedAt = undefined;
+    }
+
+    doc.timeline.push(timelineEvent);
+    await doc.save();
+
+    return formatGrievance(doc, actorPayload.sub);
   }
 }
 

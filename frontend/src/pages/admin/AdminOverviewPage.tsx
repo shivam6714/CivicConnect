@@ -44,13 +44,18 @@ export const AdminOverviewPage: React.FC = () => {
   const { user } = useAuth();
   const [grievances, setGrievances] = useState<Grievance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
 
   const fetchDashboardData = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const all = await grievanceService.getGrievances();
       setGrievances(all);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect to grievance server.';
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -159,6 +164,24 @@ export const AdminOverviewPage: React.FC = () => {
           <span>Refresh Data</span>
         </button>
       </div>
+
+      {/* ERROR BANNER */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-900 p-4 rounded-xl text-xs flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span>
+              <strong>Server Communication Error:</strong> {error}
+            </span>
+          </div>
+          <button
+            onClick={fetchDashboardData}
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* KPI METRICS GRID */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

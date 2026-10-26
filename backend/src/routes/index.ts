@@ -18,6 +18,7 @@ rootRouter.get('/', (req: Request, res: Response) => {
       verifyOtp: '/api/auth/verify-otp',
       complaints: '/api/complaints',
       myComplaints: '/api/complaints/my',
+      mapComplaints: '/api/complaints/map',
     },
   });
 });

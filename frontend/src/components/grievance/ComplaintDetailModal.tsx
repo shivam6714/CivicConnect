@@ -9,6 +9,7 @@ import {
   Camera,
   Layers,
   Tag,
+  AlertCircle,
 } from 'lucide-react';
 import { Grievance, GrievanceStatus } from '../../types/grievance';
 import { useAuth } from '../../context/AuthContext';
@@ -34,6 +35,7 @@ export const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
   const [statusNote, setStatusNote] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateSuccess, setUpdateSuccess] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   if (!isOpen || !grievance) return null;
 
@@ -44,6 +46,7 @@ export const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
     if (!selectedStatus || selectedStatus === currentGrievance.status) return;
 
     setIsUpdating(true);
+    setUpdateError(null);
     try {
       const updated = await grievanceService.updateGrievanceStatus(
         currentGrievance.id,
@@ -57,8 +60,9 @@ export const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
       if (onStatusUpdated) {
         onStatusUpdated(updated);
       }
-    } catch (err) {
-      console.error('Failed to update status:', err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update status on server.';
+      setUpdateError(msg);
     } finally {
       setIsUpdating(false);
     }
@@ -313,6 +317,13 @@ export const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
                 <div className="p-2.5 rounded-lg bg-teal-50 text-teal-800 text-xs flex items-center gap-2 border border-teal-200">
                   <CheckCircle2 className="w-4 h-4 text-teal-600" />
                   Status updated successfully.
+                </div>
+              )}
+
+              {updateError && (
+                <div className="p-2.5 rounded-lg bg-red-50 text-red-800 text-xs flex items-center gap-2 border border-red-200">
+                  <AlertCircle className="w-4 h-4 text-red-600" />
+                  {updateError}
                 </div>
               )}
 

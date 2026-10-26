@@ -31,6 +31,12 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+export class ForbiddenError extends AppError {
+  constructor(message = 'Access forbidden: Insufficient permissions', details?: unknown) {
+    super(message, 403, details);
+  }
+}
+
 export class TooManyRequestsError extends AppError {
   constructor(message = 'Too many requests, please try again later', details?: unknown) {
     super(message, 429, details);

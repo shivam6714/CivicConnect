@@ -82,13 +82,27 @@ export interface VerifyResult {
  * Maps the backend's CitizenUser entity to the frontend User interface.
  */
 export function mapBackendCitizenToUser(citizenUser: BackendCitizenUser): User {
+  const role: User['role'] =
+    citizenUser.role === 'admin'
+      ? 'CITY_ADMIN'
+      : citizenUser.role === 'official'
+      ? 'MUNICIPAL_OFFICER'
+      : 'CITIZEN';
+
+  const defaultName =
+    citizenUser.role === 'admin'
+      ? 'City Administrator'
+      : citizenUser.role === 'official'
+      ? 'Municipal Officer'
+      : `Citizen (${citizenUser.phoneNumber})`;
+
   return {
     id: citizenUser.id,
-    name: citizenUser.fullName?.trim() || `Citizen (${citizenUser.phoneNumber})`,
+    name: citizenUser.fullName?.trim() || defaultName,
     email: `${citizenUser.phoneNumber.replace('+', '')}@citizen.civicconnect.in`,
     phone: citizenUser.phoneNumber,
     phoneNumber: citizenUser.phoneNumber,
-    role: 'CITIZEN',
+    role,
     wardAssigned: citizenUser.wardNumber,
     wardNumber: citizenUser.wardNumber,
     isPhoneVerified: citizenUser.isPhoneVerified,
@@ -208,14 +222,12 @@ export const authService = {
       if (!raw) return null;
       const user = JSON.parse(raw) as User;
 
-      // If user is a citizen, ensure their authentication token is present and not expired
-      if (user.role === 'CITIZEN') {
-        const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-        if (!token || isJwtExpired(token)) {
-          localStorage.removeItem(TOKEN_STORAGE_KEY);
-          sessionStorage.removeItem(SESSION_STORAGE_KEY);
-          return null;
-        }
+      // If user has a token, ensure it is present and not expired
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (token && isJwtExpired(token)) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return null;
       }
 
       return user;

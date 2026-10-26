@@ -69,6 +69,23 @@ export const createGrievanceSchema = z.object({
 
 export type CreateGrievanceInput = z.infer<typeof createGrievanceSchema>;
 
+export const updateGrievanceStatusSchema = z.object({
+  status: z.enum(GRIEVANCE_STATUSES, {
+    message: `Invalid status. Must be one of: ${GRIEVANCE_STATUSES.join(', ')}`,
+  }),
+  note: z.string().trim().max(1000, 'Note must not exceed 1000 characters').optional(),
+});
+
+export type UpdateGrievanceStatusInput = z.infer<typeof updateGrievanceStatusSchema>;
+
+export interface GrievanceFilterOptions {
+  status?: GrievanceStatus;
+  category?: GrievanceCategory;
+  wardId?: number;
+  priority?: GrievancePriority;
+  searchQuery?: string;
+}
+
 export interface GrievanceTimelineItem {
   id: string;
   status: GrievanceStatus;
@@ -103,4 +120,25 @@ export interface FormattedGrievance {
   resolvedAt?: string;
   slaDeadline?: string;
   timeline: GrievanceTimelineItem[];
+}
+
+/**
+ * Stripped public representation for the Jammu grievance map.
+ * Strictly omits reporterPhone, reporterName, citizenId, confidential notes, and internal metadata.
+ */
+export interface PublicMapGrievance {
+  id: string;
+  trackingNumber: string;
+  title: string;
+  category: GrievanceCategory;
+  status: GrievanceStatus;
+  priority: GrievancePriority;
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+  address: string;
+  ward: BackendJammuWard;
+  supportCount: number;
+  createdAt: string;
 }

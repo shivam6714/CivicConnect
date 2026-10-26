@@ -7,6 +7,7 @@ import {
   type GrievanceStatus,
   type GrievancePriority,
   type FormattedGrievance,
+  type PublicMapGrievance,
 } from './grievance.types.js';
 import { getJammuWard, type BackendJammuWard } from '../../utils/jammuWards.js';
 
@@ -229,5 +230,28 @@ export function formatGrievance(
       actor: tl.actor,
       note: tl.note || undefined,
     })),
+  };
+}
+
+/**
+ * Stripped public representation for the Jammu grievance map.
+ * Strictly omits reporterPhone, reporterName, citizenId, confidential notes, and internal metadata.
+ */
+export function formatPublicMapGrievance(doc: IGrievanceDocument): PublicMapGrievance {
+  return {
+    id: doc._id.toString(),
+    trackingNumber: doc.trackingNumber,
+    title: doc.title,
+    category: doc.category,
+    status: doc.status,
+    priority: doc.priority,
+    location: {
+      latitude: doc.location.latitude,
+      longitude: doc.location.longitude,
+    },
+    address: doc.address,
+    ward: doc.ward || getJammuWard(1),
+    supportCount: doc.supportCount || 1,
+    createdAt: doc.createdAt.toISOString(),
   };
 }

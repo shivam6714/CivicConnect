@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { InteractiveMap } from '../components/map/InteractiveMap';
 import { grievanceService } from '../services/grievanceService';
 import { Grievance, Coordinates } from '../types/grievance';
@@ -6,25 +6,55 @@ import { JAMMU_MAP_CENTER } from '../data/jammuWards';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { StatusBadge, PriorityBadge, CategoryBadge } from '../components/grievance/GrievanceStatusBadge';
-import { MapPin, ThumbsUp, Calendar, X, Compass } from 'lucide-react';
+import { MapPin, ThumbsUp, Calendar, X, Compass, RefreshCw, AlertTriangle } from 'lucide-react';
 
 export const MapViewPage: React.FC = () => {
   const [grievances, setGrievances] = useState<Grievance[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
   const [mapCenter, setMapCenter] = useState<Coordinates>(JAMMU_MAP_CENTER);
   const [mapZoom, setMapZoom] = useState(13);
 
-  useEffect(() => {
-    const load = async () => {
-      const data = await grievanceService.getGrievances();
+  // Filters
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
+  const loadRealMapData = useCallback(async (isManual = false) => {
+    if (isManual) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setError(null);
+    try {
+      const data = await grievanceService.getPublicMapGrievances();
       setGrievances(data);
-    };
-    load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect to municipal map service.';
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadRealMapData();
+  }, [loadRealMapData]);
+
+  const filteredGrievances = useMemo(() => {
+    return grievances.filter((g) => {
+      if (categoryFilter !== 'ALL' && g.category !== categoryFilter) return false;
+      if (statusFilter !== 'ALL' && g.status !== statusFilter) return false;
+      return true;
+    });
+  }, [grievances, categoryFilter, statusFilter]);
 
   const handleSupport = async (id: string) => {
     await grievanceService.supportGrievance(id);
-    const updated = await grievanceService.getGrievances();
+    const updated = await grievanceService.getPublicMapGrievances();
     setGrievances(updated);
     if (selectedGrievance && selectedGrievance.id === id) {
       const updatedItem = updated.find((g) => g.id === id);
@@ -47,60 +77,123 @@ export const MapViewPage: React.FC = () => {
             Jammu Geospatial Municipal Grid
           </span>
           <span className="text-xs text-civic-secondary hidden sm:inline">
-            ({grievances.length} Active Spatial Anchors)
+            ({filteredGrievances.length} Active Spatial Anchors)
           </span>
+          <button
+            onClick={() => loadRealMapData(true)}
+            disabled={isLoading || isRefreshing}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 disabled:opacity-50 transition-colors ml-1"
+            title="Refresh map pins from backend"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-teal-600' : 'text-navy-900'}`} />
+            <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+          </button>
         </div>
 
-        {/* Quick Ward Jumps */}
-        <div className="flex items-center gap-1.5 overflow-x-auto text-xs py-1">
-          <span className="text-civic-secondary text-[11px] font-medium hidden md:inline">
-            Quick Zoom:
-          </span>
-          <button
-            onClick={() => focusWard(32.7088, 74.8631)}
-            className="px-2.5 py-1 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
+        {/* Category & Status Filters + Quick Ward Jumps */}
+        <div className="flex flex-wrap items-center gap-2 text-xs py-1">
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="py-1 px-2 bg-gray-50 border border-civic-border rounded-lg text-navy-900 text-xs focus:ring-teal-500"
           >
-            Gandhi Nagar
-          </button>
-          <button
-            onClick={() => focusWard(32.7292, 74.8615)}
-            className="px-2.5 py-1 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
+            <option value="ALL">All Categories</option>
+            <option value="POTHOLE_ROAD">Pothole / Road</option>
+            <option value="STREET_LIGHT">Streetlight</option>
+            <option value="GARBAGE_ACCUMULATION">Garbage Dump</option>
+            <option value="DRAINAGE_SEWAGE">Drainage / Sewage</option>
+            <option value="WATER_SUPPLY">Water Supply</option>
+            <option value="ENCROACHMENT">Encroachment</option>
+            <option value="OTHER">Other</option>
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="py-1 px-2 bg-gray-50 border border-civic-border rounded-lg text-navy-900 text-xs focus:ring-teal-500"
           >
-            Old Heritage City
-          </button>
-          <button
-            onClick={() => focusWard(32.7532, 74.8465)}
-            className="px-2.5 py-1 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
-          >
-            Janipur
-          </button>
-          <button
-            onClick={() => focusWard(32.7285, 74.8780)}
-            className="px-2.5 py-1 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
-          >
-            Bahu Fort
-          </button>
-          <button
-            onClick={() => {
-              setMapCenter(JAMMU_MAP_CENTER);
-              setMapZoom(13);
-            }}
-            className="px-2.5 py-1 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium whitespace-nowrap"
-          >
-            Reset City View
-          </button>
+            <option value="ALL">All Statuses</option>
+            <option value="REPORTED">Reported</option>
+            <option value="AI_TRIAGED">AI Triaged</option>
+            <option value="IN_PROGRESS">In Progress</option>
+            <option value="RESOLVED">Resolved</option>
+          </select>
+
+          <div className="hidden lg:flex items-center gap-1 border-l border-gray-200 pl-2">
+            <span className="text-civic-secondary text-[11px] font-medium">Quick Zoom:</span>
+            <button
+              onClick={() => focusWard(32.7088, 74.8631)}
+              className="px-2 py-0.5 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
+            >
+              Gandhi Nagar
+            </button>
+            <button
+              onClick={() => focusWard(32.7292, 74.8615)}
+              className="px-2 py-0.5 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
+            >
+              Old City
+            </button>
+            <button
+              onClick={() => focusWard(32.7532, 74.8465)}
+              className="px-2 py-0.5 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
+            >
+              Janipur
+            </button>
+            <button
+              onClick={() => focusWard(32.7285, 74.8780)}
+              className="px-2 py-0.5 rounded bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 font-medium whitespace-nowrap"
+            >
+              Bahu Fort
+            </button>
+            <button
+              onClick={() => {
+                setMapCenter(JAMMU_MAP_CENTER);
+                setMapZoom(13);
+              }}
+              className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium whitespace-nowrap"
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* ERROR BANNER IF API CALL FAILS */}
+      {error && (
+        <div className="bg-red-50 border-b border-red-200 text-red-900 px-4 py-3 text-xs flex items-center justify-between z-10">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span>
+              <strong>Map Service Warning:</strong> Could not retrieve live coordinates from backend ({error}).
+            </span>
+          </div>
+          <button
+            onClick={() => loadRealMapData(true)}
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
+
       {/* Map Container and Drawer */}
       <div className="relative flex-1 w-full min-h-[550px] flex">
-        {grievances.length === 0 && (
+        {isLoading && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none px-4 w-full max-w-md text-center">
+            <div className="bg-white/95 backdrop-blur-sm border border-slate-200 px-4 py-2.5 rounded-full shadow-md inline-flex items-center gap-2 text-xs font-medium text-navy-900 pointer-events-auto">
+              <div className="w-3.5 h-3.5 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+              <span>Loading real grievance coordinates from backend...</span>
+            </div>
+          </div>
+        )}
+
+        {!isLoading && filteredGrievances.length === 0 && !error && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none px-4 w-full max-w-md text-center">
             <div className="bg-white/95 backdrop-blur-sm border border-slate-200 px-4 py-2.5 rounded-full shadow-md inline-flex items-center gap-2 text-xs font-medium text-navy-900 pointer-events-auto">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              <span>No complaint locations available</span>
+              <span>No complaint locations match current filters</span>
               <span className="text-slate-300 hidden sm:inline">|</span>
-              <span className="text-slate-500 hidden sm:inline">New reports will appear here in real time</span>
+              <span className="text-slate-500 hidden sm:inline">Newly submitted complaints will appear here in real time</span>
             </div>
           </div>
         )}
@@ -109,7 +202,7 @@ export const MapViewPage: React.FC = () => {
             height="100%"
             zoom={mapZoom}
             center={mapCenter}
-            grievances={grievances}
+            grievances={filteredGrievances}
             onGrievanceClick={(g) => setSelectedGrievance(g)}
           />
         </div>
