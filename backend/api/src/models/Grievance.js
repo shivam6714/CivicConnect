@@ -1,123 +1,195 @@
 import mongoose from 'mongoose';
 
+export const ALLOWED_CATEGORIES = [
+  'POTHOLE_ROAD',
+  'STREET_LIGHT',
+  'GARBAGE_ACCUMULATION',
+  'DRAINAGE_SEWAGE',
+  'WATER_SUPPLY',
+  'ENCROACHMENT',
+  'OTHER',
+];
+
+export const ALLOWED_STATUSES = [
+  'REPORTED',
+  'AI_TRIAGED',
+  'IN_PROGRESS',
+  'RESOLVED',
+  'REJECTED',
+];
+
+export const ALLOWED_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+
 const timelineEventSchema = new mongoose.Schema(
   {
     id: { type: String, default: () => `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}` },
     status: { type: String, required: true },
     timestamp: { type: Date, default: Date.now },
     actor: { type: String, default: 'Citizen' },
-    note: { type: String },
+    note: { type: String, default: '' },
   },
   { _id: false }
 );
 
 const resolutionEvidenceSchema = new mongoose.Schema(
   {
-    imageUrl: { type: String },
-    notes: { type: String },
-    resolvedAt: { type: Date },
-    officerName: { type: String },
+    imageUrl: { type: String, default: null },
+    notes: { type: String, default: null },
+    resolvedAt: { type: Date, default: null },
+    officerName: { type: String, default: null },
+  },
+  { _id: false }
+);
+
+const duplicateCandidateSchema = new mongoose.Schema(
+  {
+    complaintId: { type: String, required: true },
+    similarityScore: { type: Number, required: true },
+    distanceMeters: { type: Number, default: null },
+    status: { type: String, default: null },
   },
   { _id: false }
 );
 
 const aiTriageMetadataSchema = new mongoose.Schema(
   {
-    confidence: { type: Number, default: 0.85 },
-    detectedCategory: { type: String },
-    severityScore: { type: Number, default: 5.0 },
-    potentialDuplicateIds: { type: [String], default: [] },
-    suggestedDepartment: { type: String },
-    duplicateEvidence: { type: mongoose.Schema.Types.Mixed },
+    processedAt: { type: Date, default: null },
+    detectedCategory: { type: String, default: null },
+    confidence: { type: Number, default: null },
+    severityScore: { type: Number, default: null },
+    suggestedDepartment: { type: String, default: null },
+    duplicateEvidence: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );
 
 const grievanceSchema = new mongoose.Schema(
   {
+    // Tracking & Identification
     trackingNumber: {
       type: String,
       required: true,
       unique: true,
       index: true,
     },
+
+    // User-provided Content (Preserved, never silently overwritten by ML)
     title: {
       type: String,
-      required: [true, 'Title is required'],
+      required: [true, 'Complaint title is required'],
       trim: true,
+      minlength: [3, 'Title must be at least 3 characters'],
+      maxlength: [200, 'Title cannot exceed 200 characters'],
     },
     description: {
       type: String,
-      required: [true, 'Description is required'],
+      required: [true, 'Complaint description is required'],
       trim: true,
+      minlength: [10, 'Description must be at least 10 characters'],
+      maxlength: [2500, 'Description cannot exceed 2500 characters'],
     },
     category: {
       type: String,
-      enum: [
-        'POTHOLE_ROAD',
-        'STREET_LIGHT',
-        'GARBAGE_ACCUMULATION',
-        'DRAINAGE_SEWAGE',
-        'WATER_SUPPLY',
-        'ENCROACHMENT',
-        'OTHER',
-      ],
-      required: true,
+      enum: ALLOWED_CATEGORIES,
+      default: 'OTHER',
     },
-    status: {
-      type: String,
-      enum: [
-        'REPORTED',
-        'AI_TRIAGED',
-        'IN_PROGRESS',
-        'RESOLVED',
-        'REJECTED',
-        'SUPPORTED_EXISTING',
-      ],
-      default: 'REPORTED',
+
+    // User-provided Location (Optional)
+    location: {
+      latitude: {
+        type: Number,
+        min: [-90, 'Latitude must be between -90 and 90'],
+        max: [90, 'Latitude must be between -90 and 90'],
+        default: null,
+      },
+      longitude: {
+        type: Number,
+        min: [-180, 'Longitude must be between -180 and 180'],
+        max: [180, 'Longitude must be between -180 and 180'],
+        default: null,
+      },
     },
-    priority: {
-      type: String,
-      enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
-      default: 'MEDIUM',
-    },
-    // MongoDB 2dsphere GeoJSON Point: coordinates format [longitude, latitude]
     locationPoint: {
       type: {
         type: String,
         enum: ['Point'],
-        default: 'Point',
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
-        required: true,
       },
     },
     address: {
       type: String,
-      required: true,
+      trim: true,
+      default: '',
     },
     landmark: {
       type: String,
+      trim: true,
+      default: '',
     },
     ward: {
-      id: { type: Number, required: true },
-      number: { type: Number, required: true },
-      name: { type: String, required: true },
-      zone: { type: String, required: true },
+      id: { type: Number, default: null },
+      number: { type: Number, default: null },
+      name: { type: String, default: '' },
+      zone: { type: String, default: '' },
     },
-    imageUrl: {
-      type: String,
-    },
+
+    // Reporter Metadata
     reporterName: {
       type: String,
+      trim: true,
+      default: '',
     },
     reporterPhone: {
       type: String,
+      trim: true,
+      default: '',
     },
     isAnonymous: {
       type: Boolean,
       default: false,
+    },
+    imageUrl: {
+      type: String,
+      default: null,
+    },
+
+    // ML Predictions (Explicitly Separated from User Input)
+    predictedCategory: {
+      type: String,
+      default: null,
+    },
+    confidence: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: null,
+    },
+    modelVersion: {
+      type: String,
+      default: null,
+    },
+    potentialDuplicates: {
+      type: [duplicateCandidateSchema],
+      default: [],
+    },
+    aiTriageMetadata: {
+      type: aiTriageMetadataSchema,
+      default: () => ({}),
+    },
+
+    // Complaint Lifecycle & Status
+    status: {
+      type: String,
+      enum: ALLOWED_STATUSES,
+      default: 'REPORTED',
+      index: true,
+    },
+    priority: {
+      type: String,
+      enum: ALLOWED_PRIORITIES,
+      default: 'MEDIUM',
     },
     supportCount: {
       type: Number,
@@ -129,13 +201,11 @@ const grievanceSchema = new mongoose.Schema(
     },
     slaDeadline: {
       type: Date,
-    },
-    aiTriageMetadata: {
-      type: aiTriageMetadataSchema,
-      default: () => ({}),
+      default: null,
     },
     resolutionEvidence: {
       type: resolutionEvidenceSchema,
+      default: null,
     },
     timeline: {
       type: [timelineEventSchema],
@@ -149,25 +219,31 @@ const grievanceSchema = new mongoose.Schema(
   }
 );
 
-// Geospatial index for radius and proximity queries
-grievanceSchema.index({ locationPoint: '2dsphere' });
+// Sparse 2dsphere index so complaints without coordinates can still be indexed cleanly
+grievanceSchema.index({ locationPoint: '2dsphere' }, { sparse: true });
 grievanceSchema.index({ status: 1, category: 1 });
 grievanceSchema.index({ 'ward.id': 1 });
 
-// Transform output for frontend compatibility ({ latitude, longitude }, and string id)
+// Normalize JSON output format matching existing frontend contracts
 grievanceSchema.methods.toJSON = function () {
   const obj = this.toObject();
   obj.id = obj._id.toString();
-  
-  if (obj.locationPoint && Array.isArray(obj.locationPoint.coordinates)) {
-    obj.location = {
-      longitude: obj.locationPoint.coordinates[0],
-      latitude: obj.locationPoint.coordinates[1],
-    };
+
+  // Ensure location matches { latitude, longitude } shape
+  if (!obj.location || obj.location.latitude === null) {
+    if (obj.locationPoint && Array.isArray(obj.locationPoint.coordinates) && obj.locationPoint.coordinates.length === 2) {
+      obj.location = {
+        longitude: obj.locationPoint.coordinates[0],
+        latitude: obj.locationPoint.coordinates[1],
+      };
+    } else {
+      obj.location = null;
+    }
   }
-  
+
   delete obj._id;
   delete obj.__v;
+  delete obj.locationPoint;
   return obj;
 };
 

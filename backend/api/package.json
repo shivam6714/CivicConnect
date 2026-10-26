@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "seed": "node src/seeds/seedData.js"
+    "seed": "node src/seeds/seedData.js",
+    "test": "node src/test_api.js"
   },
   "keywords": [
     "civicconnect",
