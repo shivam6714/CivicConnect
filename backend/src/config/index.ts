@@ -19,6 +19,20 @@ export interface AppConfig {
     maxAttempts: number;
     resendCooldownSeconds: number;
   };
+  storage: {
+    provider: 'local' | 's3';
+    localDir: string;
+    maxFileSizeBytes: number;
+    allowedMimeTypes: string[];
+    publicBaseUrl?: string;
+    s3?: {
+      bucket?: string;
+      region?: string;
+      accessKeyId?: string;
+      secretAccessKey?: string;
+      endpoint?: string;
+    };
+  };
 }
 
 export const KNOWN_PLACEHOLDER_JWT_SECRETS = new Set([
@@ -100,6 +114,20 @@ export const config: AppConfig = {
     maxAttempts: parseInt(process.env.OTP_MAX_ATTEMPTS || '3', 10),
     resendCooldownSeconds: parseInt(process.env.OTP_RESEND_COOLDOWN_SECONDS || '60', 10),
   },
+  storage: {
+    provider: (process.env.STORAGE_PROVIDER?.toLowerCase() === 's3' ? 's3' : 'local') as 'local' | 's3',
+    localDir: process.env.STORAGE_LOCAL_DIR || 'uploads',
+    maxFileSizeBytes: parseInt(process.env.STORAGE_MAX_FILE_SIZE_BYTES || String(5 * 1024 * 1024), 10),
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    publicBaseUrl: process.env.STORAGE_PUBLIC_BASE_URL,
+    s3: {
+      bucket: process.env.S3_BUCKET,
+      region: process.env.S3_REGION || 'us-east-1',
+      accessKeyId: process.env.S3_ACCESS_KEY_ID,
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+      endpoint: process.env.S3_ENDPOINT,
+    },
+  },
 };
 
 /**
@@ -113,6 +141,16 @@ export function validateConfig(): void {
       'Configuration Error: ENABLE_DB is set to true, but MONGODB_URI is missing or empty. ' +
       'Please define MONGODB_URI in your environment or set ENABLE_DB=false to run without a database.'
     );
+  }
+
+  // Storage configuration validation
+  if (config.storage.provider === 's3') {
+    const s3 = config.storage.s3;
+    if (!s3?.bucket || !s3?.accessKeyId || !s3?.secretAccessKey) {
+      throw new Error(
+        'Configuration Error: S3 storage provider is configured (STORAGE_PROVIDER=s3), but required S3 credentials (S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY) are missing. Please provide the required S3 environment variables or switch to STORAGE_PROVIDER=local.'
+      );
+    }
   }
 
   // Production-specific security validations

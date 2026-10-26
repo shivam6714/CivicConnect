@@ -21,6 +21,7 @@ interface MockStoredMessage {
 export class MockOtpProvider implements OtpProvider {
   public readonly name = 'mock';
   private sentMessages: Map<string, MockStoredMessage[]> = new Map();
+  private fixedOtpForTest: string | null = null;
 
   constructor() {
     if (config.nodeEnv === 'production') {
@@ -31,17 +32,45 @@ export class MockOtpProvider implements OtpProvider {
     }
   }
 
+  /**
+   * Configures a predictable OTP for deterministic test scenarios.
+   * Strictly prohibited in production environments.
+   */
+  setPredictableOtpForTest(otp: string | null): void {
+    const isProduction =
+      config.nodeEnv === 'production' ||
+      process.env.NODE_ENV === 'production' ||
+      process.env.APP_ENV === 'production';
+
+    const isTestMode =
+      config.nodeEnv === 'test' ||
+      process.env.NODE_ENV === 'test' ||
+      process.env.CIVICCONNECT_TEST_MODE === 'true';
+
+    if (isProduction || !isTestMode) {
+      throw new Error(
+        'Production OTP safety violation: Predictable test OTPs cannot be configured in production mode or outside isolated test environments.'
+      );
+    }
+    this.fixedOtpForTest = otp;
+  }
+
+  getPredictableOtpForTest(): string | null {
+    return this.fixedOtpForTest;
+  }
+
   async sendOtp(options: SendOtpOptions): Promise<SendOtpResult> {
     if (config.nodeEnv === 'production') {
       throw new Error('Production OTP safety violation: Attempted to send mock OTP in production mode.');
     }
 
+    const effectiveOtp = this.fixedOtpForTest || options.otp;
     const masked = maskPhoneNumber(options.recipient);
     const messageId = `mock-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const messageRecord: MockStoredMessage = {
       recipient: options.recipient,
-      otp: options.otp,
+      otp: effectiveOtp,
       expiryMinutes: options.expiryMinutes,
       sentAt: new Date(),
     };
@@ -50,11 +79,16 @@ export class MockOtpProvider implements OtpProvider {
     existing.push(messageRecord);
     this.sentMessages.set(options.recipient, existing);
 
-    // In development mode, display the generated OTP in the local server terminal for manual signup testing.
+    // In development mode, display the generated OTP in the local server terminal for manual developer testing.
     // Strictly prohibited in production and omitted in test mode.
-    if (config.nodeEnv === 'development') {
+    const isTestMode =
+      config.nodeEnv === 'test' ||
+      process.env.CIVICCONNECT_TEST_MODE === 'true' ||
+      (config.nodeEnv !== 'development' && process.env.NODE_ENV === 'test');
+
+    if (config.nodeEnv === 'development' && !isTestMode) {
       console.log(
-        `[MockOtpProvider] [DEVELOPMENT ONLY] Generated OTP for ${masked}: ${options.otp} (valid for ${options.expiryMinutes}m, messageId: ${messageId})`
+        `[MockOtpProvider] [DEVELOPMENT ONLY] Generated OTP for ${masked}: ${effectiveOtp} (valid for ${options.expiryMinutes}m, messageId: ${messageId})`
       );
     }
 
@@ -89,5 +123,6 @@ export class MockOtpProvider implements OtpProvider {
    */
   clearHistory(): void {
     this.sentMessages.clear();
+    this.fixedOtpForTest = null;
   }
 }

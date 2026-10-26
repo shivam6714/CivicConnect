@@ -1,17 +1,23 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   MapPin,
   Building2,
   Eye,
+  RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import { grievanceService } from '../../services/grievanceService';
 import { Grievance, Coordinates, GrievanceStatus } from '../../types/grievance';
 import { JAMMU_MAP_CENTER, JAMMU_WARDS } from '../../data/jammuWards';
 import { InteractiveMap } from '../../components/map/InteractiveMap';
 import { ComplaintDetailModal } from '../../components/grievance/ComplaintDetailModal';
+import { getAccessibleImageUrl } from '../../utils/imageUtils';
 
 export const AdminMapPage: React.FC = () => {
   const [allGrievances, setAllGrievances] = useState<Grievance[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
   const [detailModalGrievance, setDetailModalGrievance] = useState<Grievance | null>(null);
 
@@ -23,13 +29,28 @@ export const AdminMapPage: React.FC = () => {
   const [mapCenter, setMapCenter] = useState<Coordinates>(JAMMU_MAP_CENTER);
   const [mapZoom, setMapZoom] = useState(13);
 
-  useEffect(() => {
-    const load = async () => {
+  const loadAdminMapData = useCallback(async (isManual = false) => {
+    if (isManual) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setError(null);
+    try {
       const data = await grievanceService.getGrievances();
       setAllGrievances(data);
-    };
-    load();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect to grievance server.';
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadAdminMapData();
+  }, [loadAdminMapData]);
 
   // Filter grievances according to filter selections across the entire city
   const displayGrievances = useMemo(() => {
@@ -88,6 +109,15 @@ export const AdminMapPage: React.FC = () => {
               <span className="text-[10px] font-mono bg-teal-50 text-teal-800 px-2 py-0.5 rounded border border-teal-200">
                 {displayGrievances.length} Map Pins
               </span>
+              <button
+                onClick={() => loadAdminMapData(true)}
+                disabled={isLoading || isRefreshing}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 disabled:opacity-50 transition-colors ml-1"
+                title="Refresh map pins from backend"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-teal-600' : 'text-navy-900'}`} />
+                <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+              </button>
             </div>
             <p className="text-[11px] text-civic-secondary">
               {displayGrievances.length === 0
@@ -159,6 +189,24 @@ export const AdminMapPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ERROR BANNER */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-900 p-3 rounded-xl text-xs flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span>
+              <strong>Map Error:</strong> Could not retrieve live coordinates ({error})
+            </span>
+          </div>
+          <button
+            onClick={() => loadAdminMapData(true)}
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Main Map Box & Lateral Detail Drawer */}
       <div className="flex-1 bg-white rounded-xl border border-civic-border shadow-2xs overflow-hidden relative flex">
         {displayGrievances.length === 0 && (
@@ -229,15 +277,22 @@ export const AdminMapPage: React.FC = () => {
               </div>
 
               {/* Photo preview if present */}
-              {selectedGrievance.imageUrl && (
-                <div className="rounded-lg overflow-hidden border border-gray-200 h-32 bg-gray-100">
-                  <img
-                    src={selectedGrievance.imageUrl}
-                    alt={selectedGrievance.title}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
+              {(() => {
+                const safeImgUrl = getAccessibleImageUrl(selectedGrievance.imageUrl);
+                if (!safeImgUrl) return null;
+                return (
+                  <div className="rounded-lg overflow-hidden border border-gray-200 h-32 bg-gray-100">
+                    <img
+                      src={safeImgUrl}
+                      alt={selectedGrievance.title}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="pt-3 border-t border-gray-100">
@@ -262,6 +317,7 @@ export const AdminMapPage: React.FC = () => {
           setDetailModalGrievance(updated);
           setSelectedGrievance(updated);
           setAllGrievances((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+          loadAdminMapData(true);
         }}
       />
     </div>

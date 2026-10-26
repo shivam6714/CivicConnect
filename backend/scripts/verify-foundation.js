@@ -2,7 +2,7 @@ import http from 'node:http';
 import mongoose from 'mongoose';
 import { createApp } from '../dist/app.js';
 import { config, validateConfig, parseCorsConfig } from '../dist/config/index.js';
-import { getDbStatus, isDbConnected, registerConnectionListeners } from '../dist/config/db.js';
+import { getDbStatus, isDbConnected, registerConnectionListeners, validateIsolatedTestDbUri, connectDB } from '../dist/config/db.js';
 import { getOtpProvider, setOtpProvider, MockOtpProvider } from '../dist/providers/otp/index.js';
 import { isValidIndianMobile, normalizeIndianMobile, maskPhoneNumber } from '../dist/utils/phone.js';
 import { validateIsolatedTestUri } from './testDbHelper.js';
@@ -25,6 +25,23 @@ async function runTests() {
   function assertThrows(fn, testName, expectedSubstring) {
     try {
       fn();
+      console.error(`[FAIL] ${testName} (Expected exception but none was thrown)`);
+      failed++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!expectedSubstring || message.toLowerCase().includes(expectedSubstring.toLowerCase())) {
+        console.log(`[PASS] ${testName} (Threw: "${message}")`);
+        passed++;
+      } else {
+        console.error(`[FAIL] ${testName} (Threw unexpected message: "${message}")`);
+        failed++;
+      }
+    }
+  }
+
+  async function assertThrowsAsync(fn, testName, expectedSubstring) {
+    try {
+      await fn();
       console.error(`[FAIL] ${testName} (Expected exception but none was thrown)`);
       failed++;
     } catch (err) {
@@ -112,6 +129,88 @@ async function runTests() {
   } finally {
     config.nodeEnv = savedNodeEnv;
     config.otp.provider = savedOtpProvider;
+    setOtpProvider(null);
+  }
+
+  // ==========================================
+  // 2B. Automated Test Mode Guards & Quota Protection
+  // ==========================================
+  console.log('\n--- 2B. Testing Automated Test Mode Guards & Quota Protection ---');
+  const savedProcessNodeEnv = process.env.NODE_ENV;
+  try {
+    config.nodeEnv = 'test';
+    process.env.NODE_ENV = 'test';
+    // A. Automated tests reject real SMS providers
+    config.otp.provider = 'twilio';
+    setOtpProvider(null);
+    assertThrows(
+      () => getOtpProvider(),
+      'getOtpProvider rejects real SMS provider (twilio) in test mode',
+      'Test Safety Violation'
+    );
+
+    // B. setOtpProvider rejects registering real SMS provider in test mode
+    assertThrows(
+      () =>
+        setOtpProvider({
+          name: 'fast2sms',
+          sendOtp: async () => ({ success: true, messageId: 'm', provider: 'fast2sms', timestamp: new Date() }),
+        }),
+      'setOtpProvider rejects registering real SMS provider (fast2sms) in test mode',
+      'Test Safety Violation'
+    );
+
+    // C. Test mode with mock provider succeeds and returns dedicated MockOtpProvider
+    config.otp.provider = 'mock';
+    setOtpProvider(null);
+    const mockProv = getOtpProvider();
+    assert(mockProv.name === 'mock', 'getOtpProvider returns dedicated MockOtpProvider in test mode');
+
+    // D. Predictable OTP support in test mode
+    if ('setPredictableOtpForTest' in mockProv) {
+      mockProv.setPredictableOtpForTest('654321');
+      assert(mockProv.getPredictableOtpForTest() === '654321', 'setPredictableOtpForTest sets predictable test OTP');
+      await mockProv.sendOtp({
+        recipient: '+919419199991',
+        otp: '111111',
+        expiryMinutes: 5,
+      });
+      assert(
+        mockProv.getLastSentOtpForTest('+919419199991') === '654321',
+        'sendOtp uses predictable OTP in test mode without sending real SMS'
+      );
+      mockProv.clearHistory();
+    }
+
+    // E. Production prohibition of predictable test OTP
+    config.nodeEnv = 'production';
+    if ('setPredictableOtpForTest' in mockProv) {
+      assertThrows(
+        () => mockProv.setPredictableOtpForTest('123456'),
+        'Predictable test OTP is strictly prohibited in production mode',
+        'cannot be configured in production'
+      );
+    }
+
+    // F. Cached real SMS provider cannot be reused in test mode
+    config.nodeEnv = 'development';
+    process.env.NODE_ENV = 'development';
+    setOtpProvider({
+      name: 'twilio',
+      sendOtp: async () => ({ success: true, messageId: 't', provider: 'twilio', timestamp: new Date() }),
+    });
+    config.nodeEnv = 'test';
+    process.env.NODE_ENV = 'test';
+    assertThrows(
+      () => getOtpProvider(),
+      'getOtpProvider rejects reusing cached real SMS provider in test mode',
+      'Test Safety Violation'
+    );
+  } finally {
+    config.nodeEnv = savedNodeEnv;
+    config.otp.provider = savedOtpProvider;
+    process.env.NODE_ENV = savedProcessNodeEnv;
+    delete process.env.CIVICCONNECT_TEST_MODE;
     setOtpProvider(null);
   }
 
@@ -387,8 +486,9 @@ async function runTests() {
   const testOtpValue = '987654';
 
   // Subtest 8A: When NODE_ENV=development, mock OTP is printed to terminal and labeled [DEVELOPMENT ONLY]
-  const devProvider = new MockOtpProvider();
   config.nodeEnv = 'development';
+  process.env.NODE_ENV = 'development';
+  const devProvider = new MockOtpProvider();
   startLogCapture();
   await devProvider.sendOtp({
     recipient: testMobile,
@@ -403,6 +503,7 @@ async function runTests() {
 
   // Subtest 8B: When NODE_ENV=test, mock OTP is strictly OMITTED from logs
   config.nodeEnv = 'test';
+  process.env.NODE_ENV = 'test';
   startLogCapture();
   await devProvider.sendOtp({
     recipient: testMobile,
@@ -415,6 +516,7 @@ async function runTests() {
 
   // Subtest 8C: When NODE_ENV=production, mock OTP provider throws immediately
   config.nodeEnv = 'production';
+  process.env.NODE_ENV = 'production';
   startLogCapture();
   assertThrows(
     () => new MockOtpProvider(),
@@ -439,6 +541,7 @@ async function runTests() {
 
   // Restore environment
   config.nodeEnv = savedNodeEnv;
+  process.env.NODE_ENV = savedProcessNodeEnv;
 
   // ==========================================
   // 9. Integration Test Database Isolation Safeguards
@@ -456,7 +559,7 @@ async function runTests() {
   assertThrows(
     () => validateIsolatedTestUri('mongodb://user:secret@civicconnect-db.azure.com:27017/civicconnect'),
     'validateIsolatedTestUri rejects cloud provider URIs',
-    'URI targets a remote cloud database domain'
+    'is not a verified localhost/loopback address'
   );
 
   // Subtest 9C: Rejection of empty/missing URI
@@ -483,6 +586,36 @@ async function runTests() {
       'validateIsolatedTestUri strictly rejects the actual .env MongoDB Atlas URI',
       'forbidden'
     );
+  }
+
+  // Subtest 9F: Rejection of any remote host or IP by strict URI parser
+  assertThrows(
+    () => validateIsolatedTestDbUri('mongodb://192.168.1.150:27017/test'),
+    'validateIsolatedTestDbUri rejects LAN IP host',
+    'is not a verified localhost/loopback address'
+  );
+  assertThrows(
+    () => validateIsolatedTestDbUri('mongodb://internal-mongodb.company.corp:27017/test'),
+    'validateIsolatedTestDbUri rejects arbitrary remote internal host',
+    'is not a verified localhost/loopback address'
+  );
+
+  // Subtest 9G: connectDB strictly rejects remote URI when running in test mode
+  const savedTestMongoUri = config.mongoUri;
+  const savedTestNodeEnv = config.nodeEnv;
+  try {
+    config.nodeEnv = 'test';
+    process.env.NODE_ENV = 'test';
+    config.mongoUri = 'mongodb://remote-database.internal:27017/civicconnect';
+    await assertThrowsAsync(
+      () => connectDB(),
+      'connectDB strictly rejects remote URI in test mode',
+      'Database Isolation Safety Violation'
+    );
+  } finally {
+    config.mongoUri = savedTestMongoUri;
+    config.nodeEnv = savedTestNodeEnv;
+    process.env.NODE_ENV = savedProcessNodeEnv;
   }
 
   console.log(`\n=== Verification Complete: ${passed} passed, ${failed} failed ===`);

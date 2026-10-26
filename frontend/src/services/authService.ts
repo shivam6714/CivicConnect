@@ -82,17 +82,65 @@ export interface VerifyResult {
  * Maps the backend's CitizenUser entity to the frontend User interface.
  */
 export function mapBackendCitizenToUser(citizenUser: BackendCitizenUser): User {
+  const role: User['role'] =
+    citizenUser.role === 'admin'
+      ? 'CITY_ADMIN'
+      : citizenUser.role === 'official'
+      ? 'MUNICIPAL_OFFICER'
+      : 'CITIZEN';
+
+  const defaultName =
+    citizenUser.role === 'admin'
+      ? 'City Administrator'
+      : citizenUser.role === 'official'
+      ? 'Municipal Officer'
+      : undefined;
+
+  const realName =
+    citizenUser.fullName && citizenUser.fullName.trim() !== ''
+      ? citizenUser.fullName.trim()
+      : defaultName;
+
+  const validWard =
+    typeof citizenUser.wardNumber === 'number' &&
+    citizenUser.wardNumber >= 1 &&
+    citizenUser.wardNumber <= 75
+      ? citizenUser.wardNumber
+      : undefined;
+
   return {
     id: citizenUser.id,
-    name: citizenUser.fullName?.trim() || `Citizen (${citizenUser.phoneNumber})`,
+    name: realName,
     email: `${citizenUser.phoneNumber.replace('+', '')}@citizen.civicconnect.in`,
     phone: citizenUser.phoneNumber,
     phoneNumber: citizenUser.phoneNumber,
-    role: 'CITIZEN',
-    wardAssigned: citizenUser.wardNumber,
-    wardNumber: citizenUser.wardNumber,
+    role,
+    wardAssigned: validWard,
+    wardNumber: validWard,
     isPhoneVerified: citizenUser.isPhoneVerified,
   };
+}
+
+export function isJwtExpired(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return true;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    const payload = JSON.parse(jsonPayload) as { exp?: number };
+    if (typeof payload.exp === 'number') {
+      return Date.now() >= payload.exp * 1000;
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 export const authService = {
@@ -186,17 +234,17 @@ export const authService = {
       if (!raw) return null;
       const user = JSON.parse(raw) as User;
 
-      // If user is a citizen, ensure their authentication token is present
-      if (user.role === 'CITIZEN') {
-        const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-        if (!token) {
-          sessionStorage.removeItem(SESSION_STORAGE_KEY);
-          return null;
-        }
+      // If user has a token, ensure it is present and not expired
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (token && isJwtExpired(token)) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return null;
       }
 
       return user;
     } catch {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
       return null;
     }
@@ -206,7 +254,15 @@ export const authService = {
    * Get currently active JWT token
    */
   getToken(): string | null {
-    return localStorage.getItem(TOKEN_STORAGE_KEY);
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token || isJwtExpired(token)) {
+      if (token) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+      return null;
+    }
+    return token;
   },
 
   /**

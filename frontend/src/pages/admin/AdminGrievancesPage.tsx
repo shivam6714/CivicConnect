@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search,
   Filter,
@@ -7,6 +7,8 @@ import {
   Sparkles,
   CheckCircle2,
   RotateCcw,
+  RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import { grievanceService } from '../../services/grievanceService';
 import { Grievance, GrievanceStatus, GrievancePriority } from '../../types/grievance';
@@ -16,6 +18,8 @@ import { ComplaintDetailModal } from '../../components/grievance/ComplaintDetail
 export const AdminGrievancesPage: React.FC = () => {
   const [grievances, setGrievances] = useState<Grievance[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [selectedGrievance, setSelectedGrievance] = useState<Grievance | null>(null);
 
   // Filters state
@@ -26,18 +30,28 @@ export const AdminGrievancesPage: React.FC = () => {
   // Ward filter: 'ALL' or a specific ward id across all 75 municipal wards
   const [selectedWardId, setSelectedWardId] = useState<string>('ALL');
 
-  useEffect(() => {
-    const loadGrievances = async () => {
+  const loadGrievances = useCallback(async (isManual = false) => {
+    if (isManual) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
-      try {
-        const data = await grievanceService.getGrievances();
-        setGrievances(data);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadGrievances();
+    }
+    setError(null);
+    try {
+      const data = await grievanceService.getGrievances();
+      setGrievances(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unable to connect to municipal database.';
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadGrievances();
+  }, [loadGrievances]);
 
   // Filter complaints based on user role and filters
   const filteredGrievances = useMemo(() => {
@@ -122,6 +136,15 @@ export const AdminGrievancesPage: React.FC = () => {
             <span className="text-[10px] font-mono bg-navy-50 text-navy-900 px-2 py-0.5 rounded border border-navy-100">
               {filteredGrievances.length} Records
             </span>
+            <button
+              onClick={() => loadGrievances(true)}
+              disabled={isLoading || isRefreshing}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-navy-50 text-navy-900 border border-navy-100 hover:bg-navy-100 disabled:opacity-50 transition-colors ml-1"
+              title="Refresh grievance database from server"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-teal-600' : 'text-navy-900'}`} />
+              <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
+            </button>
           </div>
           <p className="text-xs text-civic-secondary mt-1">
             City-wide complaint database across all Jammu Municipal Corporation wards.
@@ -133,6 +156,25 @@ export const AdminGrievancesPage: React.FC = () => {
           <strong>Note:</strong> Centralized municipal administrative view with city-wide ward filtering.
         </div>
       </div>
+
+      {/* ERROR ALERT BANNER */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-900 p-4 rounded-xl text-xs flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <div>
+              <span className="font-bold">Failed to load real database records: </span>
+              <span>{error}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => loadGrievances(true)}
+            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors flex-shrink-0"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
 
       {/* FILTER CONTROLS BAR */}
       <div className="bg-white p-4 rounded-xl border border-civic-border shadow-2xs space-y-3">

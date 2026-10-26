@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { grievanceService } from '../../services/grievanceService';
+import { ApiError } from '../../services/apiClient';
 import { Grievance, GrievanceStatus } from '../../types/grievance';
 import { ComplaintDetailModal } from '../../components/grievance/ComplaintDetailModal';
 
@@ -36,6 +37,11 @@ export const CitizenDashboardPage: React.FC = () => {
       const data = await grievanceService.getMyGrievances();
       setAllGrievances(data);
     } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        setErrorMessage('Your session has expired. Please log in again.');
+        navigate('/login/citizen', { state: { from: { pathname: '/citizen' } } });
+        return;
+      }
       const msg =
         err instanceof Error
           ? err.message
@@ -110,15 +116,15 @@ export const CitizenDashboardPage: React.FC = () => {
                 {user.phone}
               </span>
             )}
-            {(user?.wardAssigned || user?.wardNumber) && (
+            {user?.wardNumber && user.wardNumber >= 1 && user.wardNumber <= 75 ? (
               <span className="text-[11px] text-teal-800 font-semibold bg-teal-50 border border-teal-200 px-2 py-0.5 rounded">
-                Ward {user.wardAssigned || user.wardNumber}
+                Ward {user.wardNumber}
               </span>
-            )}
+            ) : null}
             <span className="text-xs text-gray-400 font-mono hidden sm:inline">Jammu Municipal Corporation</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-navy-900">
-            Welcome, {user?.name || 'Citizen'}
+            Welcome to CivicConnect
           </h1>
           <p className="text-xs text-civic-secondary max-w-xl">
             Track your submitted municipal grievances, view official photographic resolution evidence, and report new issues in your ward.
@@ -343,14 +349,24 @@ export const CitizenDashboardPage: React.FC = () => {
               >
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="font-mono text-xs font-bold text-navy-900 bg-gray-50 px-2.5 py-1 rounded border border-gray-200">
-                      {g.trackingNumber}
-                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-xs font-bold text-navy-900 bg-gray-50 px-2.5 py-1 rounded border border-gray-200">
+                        {g.trackingNumber}
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700">
+                        {g.category.replace(/_/g, ' ')}
+                      </span>
+                    </div>
                     {getStatusBadge(g.status)}
                   </div>
 
                   <h3 className="text-sm font-bold text-navy-900 leading-snug">{g.title}</h3>
                   <p className="text-xs text-civic-secondary mt-1 line-clamp-2">{g.description}</p>
+                  {g.address && (
+                    <p className="text-[11px] text-civic-secondary mt-1 truncate">
+                      {g.address}
+                    </p>
+                  )}
 
                   <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap items-center justify-between text-xs text-civic-secondary gap-2">
                     <span className="flex items-center gap-1 text-navy-900">
@@ -401,7 +417,13 @@ export const CitizenDashboardPage: React.FC = () => {
       <ComplaintDetailModal
         grievance={selectedGrievance}
         isOpen={!!selectedGrievance}
-        onClose={() => setSelectedGrievance(null)}
+        onClose={() => {
+          setSelectedGrievance(null);
+          fetchGrievances();
+        }}
+        onStatusUpdated={() => {
+          fetchGrievances();
+        }}
       />
     </div>
   );

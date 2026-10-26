@@ -64,10 +64,37 @@ export const createGrievanceSchema = z.object({
     .min(1, 'Ward number must be between 1 and 75')
     .max(75, 'Jammu Municipal Corporation consists of 75 wards'),
   imageUrl: z.string().trim().optional(),
+  imageKey: z.string().trim().optional(),
+  imageMetadata: z
+    .object({
+      filename: z.string().optional(),
+      size: z.number().optional(),
+      mimeType: z.string().optional(),
+      originalName: z.string().optional(),
+    })
+    .optional(),
+  reporterName: z.string().trim().max(100).optional(),
   isAnonymous: z.boolean().optional().default(false),
 });
 
 export type CreateGrievanceInput = z.infer<typeof createGrievanceSchema>;
+
+export const updateGrievanceStatusSchema = z.object({
+  status: z.enum(GRIEVANCE_STATUSES, {
+    message: `Invalid status. Must be one of: ${GRIEVANCE_STATUSES.join(', ')}`,
+  }),
+  note: z.string().trim().max(1000, 'Note must not exceed 1000 characters').optional(),
+});
+
+export type UpdateGrievanceStatusInput = z.infer<typeof updateGrievanceStatusSchema>;
+
+export interface GrievanceFilterOptions {
+  status?: GrievanceStatus;
+  category?: GrievanceCategory;
+  wardId?: number;
+  priority?: GrievancePriority;
+  searchQuery?: string;
+}
 
 export interface GrievanceTimelineItem {
   id: string;
@@ -93,6 +120,13 @@ export interface FormattedGrievance {
   landmark?: string;
   ward: BackendJammuWard;
   imageUrl?: string;
+  imageKey?: string;
+  imageMetadata?: {
+    filename?: string;
+    size?: number;
+    mimeType?: string;
+    originalName?: string;
+  };
   reporterName?: string;
   reporterPhone?: string;
   isAnonymous: boolean;
@@ -103,4 +137,25 @@ export interface FormattedGrievance {
   resolvedAt?: string;
   slaDeadline?: string;
   timeline: GrievanceTimelineItem[];
+}
+
+/**
+ * Stripped public representation for the Jammu grievance map.
+ * Strictly omits reporterPhone, reporterName, citizenId, confidential notes, and internal metadata.
+ */
+export interface PublicMapGrievance {
+  id: string;
+  trackingNumber: string;
+  title: string;
+  category: GrievanceCategory;
+  status: GrievanceStatus;
+  priority: GrievancePriority;
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+  address: string;
+  ward: BackendJammuWard;
+  supportCount: number;
+  createdAt: string;
 }

@@ -40,6 +40,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setIsLoading(false);
     }
+
+    // Listen for session expiration events dispatched by apiClient
+    const handleSessionExpired = () => {
+      setUser(null);
+    };
+
+    window.addEventListener('civic:session-expired', handleSessionExpired);
+    return () => {
+      window.removeEventListener('civic:session-expired', handleSessionExpired);
+    };
   }, []);
 
   const loginAdmin = async (adminId: string, password: string): Promise<User> => {

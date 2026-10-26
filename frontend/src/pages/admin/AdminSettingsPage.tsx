@@ -19,10 +19,10 @@ export const AdminSettingsPage: React.FC = () => {
       <div className="bg-white p-6 rounded-xl border border-civic-border shadow-2xs space-y-4">
         <div className="flex items-center gap-3 pb-4 border-b border-gray-100">
           <div className="w-12 h-12 rounded-xl bg-navy-900 text-teal-400 font-extrabold flex items-center justify-center text-lg shadow-2xs">
-            {user?.name.charAt(0) || 'A'}
+            {user?.name?.charAt(0) || 'A'}
           </div>
           <div>
-            <h3 className="text-sm font-bold text-navy-900">{user?.name}</h3>
+            <h3 className="text-sm font-bold text-navy-900">{user?.name || 'Administrator'}</h3>
             <p className="text-xs text-civic-secondary">{user?.email}</p>
             <div className="flex items-center gap-2 mt-1">
               <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 uppercase">

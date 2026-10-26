@@ -8,6 +8,7 @@ import {
 } from '../types/grievance';
 import { FilterOptions } from '../types/common';
 import { apiClient } from './apiClient';
+import { authService } from './authService';
 import { MOCK_GRIEVANCES } from '../data/mockGrievances';
 
 const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA !== 'false';
@@ -33,61 +34,55 @@ let localGrievances: Grievance[] = [...MOCK_GRIEVANCES];
 
 export const grievanceService = {
   /**
-   * Fetch all grievances with optional filters
+   * Fetch all city grievances with optional filters (Admin authorized)
    */
   async getGrievances(filters?: FilterOptions): Promise<Grievance[]> {
-    if (!USE_MOCK_DATA) {
-      try {
-        return await apiClient<Grievance[]>('/api/complaints', {
-          params: filters as Record<string, string | number | boolean | undefined>,
-        });
-      } catch (err) {
-        console.warn('Backend endpoint unavailable. Falling back to mock data.', err);
-      }
-    }
+    const params: Record<string, string | number | boolean | undefined> = {};
+    if (filters?.status && filters.status !== 'ALL') params.status = filters.status;
+    if (filters?.category && filters.category !== 'ALL') params.category = filters.category;
+    if (filters?.wardId && filters.wardId !== undefined) params.wardId = filters.wardId;
+    if (filters?.priority && filters.priority !== 'ALL') params.priority = filters.priority;
+    if (filters?.searchQuery && filters.searchQuery.trim().length > 0) params.searchQuery = filters.searchQuery.trim();
 
-    // Local filter emulation
-    let results = [...localGrievances];
-    if (filters?.status) {
-      results = results.filter((g) => g.status === filters.status);
-    }
-    if (filters?.category) {
-      results = results.filter((g) => g.category === filters.category);
-    }
-    if (filters?.wardId) {
-      results = results.filter((g) => g.ward.id === filters.wardId);
-    }
-    if (filters?.priority) {
-      results = results.filter((g) => g.priority === filters.priority);
-    }
-    if (filters?.searchQuery) {
-      const q = filters.searchQuery.toLowerCase();
-      results = results.filter(
-        (g) =>
-          g.title.toLowerCase().includes(q) ||
-          g.description.toLowerCase().includes(q) ||
-          g.address.toLowerCase().includes(q) ||
-          g.trackingNumber.toLowerCase().includes(q)
-      );
-    }
+    const response = await apiClient<
+      { success?: boolean; count?: number; complaints?: Grievance[]; data?: Grievance[] } | Grievance[]
+    >('/api/complaints', { params });
 
-    return results;
+    if (Array.isArray(response)) {
+      return response;
+    }
+    return response.complaints || response.data || [];
   },
 
   /**
-   * Fetch single grievance by ID
+   * Fetch real public map grievances from backend GET /api/complaints/map
+   * Returns geo-anchored complaints with private citizen data omitted.
+   */
+  async getPublicMapGrievances(): Promise<Grievance[]> {
+    const response = await apiClient<{ success?: boolean; count?: number; complaints?: Grievance[]; data?: Grievance[] } | Grievance[]>(
+      '/api/complaints/map'
+    );
+    if (Array.isArray(response)) {
+      return response;
+    }
+    return response.complaints || response.data || [];
+  },
+
+  /**
+   * Fetch single grievance by ID or tracking number
    */
   async getGrievanceById(id: string): Promise<Grievance | null> {
-    if (!USE_MOCK_DATA) {
-      try {
-        return await apiClient<Grievance>(`/api/complaints/${id}`);
-      } catch (err) {
-        console.warn('Backend unavailable, falling back to mock.', err);
-      }
-    }
+    const response = await apiClient<
+      { success: boolean; complaint?: Grievance; data?: Grievance } | Grievance
+    >(`/api/complaints/${id}`);
 
-    const found = localGrievances.find((g) => g.id === id);
-    return found || null;
+    if ('complaint' in response && response.complaint) {
+      return response.complaint;
+    }
+    if ('data' in response && response.data) {
+      return response.data;
+    }
+    return response as Grievance;
   },
 
   /**
@@ -167,6 +162,63 @@ export const grievanceService = {
   },
 
   /**
+   * Upload photographic evidence via real backend POST /api/upload.
+   * Performs client-side MIME validation and file size check (5MB).
+   */
+  async uploadEvidence(file: File): Promise<{
+    url: string;
+    key?: string;
+    metadata?: {
+      filename?: string;
+      size?: number;
+      mimeType?: string;
+      originalName?: string;
+    };
+  }> {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      throw new Error(`Invalid file format '${file.type || 'unknown'}'. Only JPEG, PNG, and WebP images are supported.`);
+    }
+
+    const maxSizeBytes = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSizeBytes) {
+      throw new Error(`File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the maximum allowed limit of 5MB.`);
+    }
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const token = authService.getToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      const errorMsg = data?.error?.message || data?.message || 'Failed to upload photographic evidence.';
+      throw new Error(errorMsg);
+    }
+
+    return {
+      url: data.url || data.file?.url,
+      key: data.key || data.file?.key,
+      metadata: data.metadata || {
+        filename: data.file?.filename,
+        size: data.file?.size,
+        mimeType: data.file?.mimetype,
+        originalName: file.name,
+      },
+    };
+  },
+
+  /**
    * Create a new grievance via real backend POST /api/complaints.
    * Derives ownership strictly from the authenticated JWT session.
    */
@@ -183,6 +235,9 @@ export const grievanceService = {
       landmark: dto.landmark?.trim() || undefined,
       wardId: dto.wardId,
       imageUrl: dto.imageUrl || undefined,
+      imageKey: dto.imageKey || undefined,
+      imageMetadata: dto.imageMetadata || undefined,
+      reporterName: dto.reporterName?.trim() || undefined,
       isAnonymous: dto.isAnonymous ?? false,
     };
 
@@ -235,44 +290,24 @@ export const grievanceService = {
   },
 
   /**
-   * Update status (for municipal officer triage)
+   * Update status via real backend PATCH /api/complaints/${id}/status
    */
   async updateGrievanceStatus(id: string, status: GrievanceStatus, note?: string): Promise<Grievance> {
-    if (!USE_MOCK_DATA) {
-      try {
-        return await apiClient<Grievance>(`/api/complaints/${id}/status`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status, note }),
-        });
-      } catch (err) {
-        console.warn('Backend status update failed, updating local state.', err);
-      }
+    const response = await apiClient<{
+      success: boolean;
+      complaint?: Grievance;
+      grievance?: Grievance;
+      data?: Grievance;
+    }>(`/api/complaints/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, note }),
+    });
+
+    const updated = response.complaint || response.grievance || response.data;
+    if (!updated) {
+      throw new Error('Server did not return updated grievance.');
     }
 
-    const index = localGrievances.findIndex((g) => g.id === id);
-    if (index === -1) {
-      throw new Error('Grievance not found');
-    }
-
-    const current = localGrievances[index];
-    const updated: Grievance = {
-      ...current,
-      status,
-      updatedAt: new Date().toISOString(),
-      resolvedAt: status === 'RESOLVED' ? new Date().toISOString() : current.resolvedAt,
-      timeline: [
-        ...current.timeline,
-        {
-          id: `tl-${Date.now()}`,
-          status,
-          timestamp: new Date().toISOString(),
-          actor: 'Municipal Officer',
-          note,
-        },
-      ],
-    };
-
-    localGrievances[index] = updated;
     return updated;
   },
 };

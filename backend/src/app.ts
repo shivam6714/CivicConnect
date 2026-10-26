@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { type Express } from 'express';
 import cors from 'cors';
 import { config, type AppConfig } from './config/index.js';
@@ -24,6 +25,10 @@ export function createApp(overrides?: Partial<AppConfig>): Express {
   // Parse JSON payloads and URL-encoded bodies
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+
+  // Serve uploaded files statically when using local storage (with traversal and dotfile protection)
+  const uploadsPath = path.resolve(process.cwd(), config.storage.localDir);
+  app.use('/uploads', express.static(uploadsPath, { dotfiles: 'ignore', index: false }));
 
   // Mount API routes
   app.use('/', rootRouter);

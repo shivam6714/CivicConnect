@@ -36,3 +36,7 @@ pnpm-debug.log*
 # Local runner scripts
 powershell.cmd
 **/powershell.cmd
+
+# Uploaded evidence media files
+uploads/
+**/uploads/

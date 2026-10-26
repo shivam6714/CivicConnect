@@ -434,22 +434,37 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const activeProvider = TILE_PROVIDERS[tileStyle];
   const initialCenter = selectedLocation || center;
 
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'POTHOLE_ROAD':
-        return '#475569';
-      case 'STREET_LIGHT':
-        return '#0284C7';
-      case 'GARBAGE_ACCUMULATION':
-        return '#D97706';
-      case 'DRAINAGE_SEWAGE':
-        return '#0D9488';
-      case 'WATER_SUPPLY':
-        return '#2563EB';
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'RESOLVED':
+        return '#0D9488'; // Teal
+      case 'IN_PROGRESS':
+        return '#7C3AED'; // Purple
+      case 'AI_TRIAGED':
+        return '#2563EB'; // Blue
+      case 'REJECTED':
+        return '#DC2626'; // Red
+      case 'REPORTED':
       default:
-        return '#14243A';
+        return '#D97706'; // Amber / Reported
     }
   };
+
+  // Safe coordinate validation to ensure non-geographic / missing coordinate records never crash Leaflet
+  const validGrievances = grievances.filter(
+    (g) =>
+      g &&
+      g.location &&
+      typeof g.location.latitude === 'number' &&
+      typeof g.location.longitude === 'number' &&
+      !isNaN(g.location.latitude) &&
+      !isNaN(g.location.longitude) &&
+      g.location.latitude >= -90 &&
+      g.location.latitude <= 90 &&
+      g.location.longitude >= -180 &&
+      g.location.longitude <= 180 &&
+      !(g.location.latitude === 0 && g.location.longitude === 0)
+  );
 
   return (
     <div
@@ -557,8 +572,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         )}
 
         {/* Existing Grievances on the Map */}
-        {grievances.map((grievance) => {
-          const pin = createPinIcon(getCategoryColor(grievance.category));
+        {validGrievances.map((grievance) => {
+          const pin = createPinIcon(getStatusColor(grievance.status));
           return (
             <Marker
               key={grievance.id}
