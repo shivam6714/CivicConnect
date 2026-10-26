@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { DuplicateAlertModal } from '../components/grievance/DuplicateAlertModal';
 import { LocationPicker } from '../components/grievance/LocationPicker';
@@ -20,6 +20,9 @@ import {
   AlertTriangle,
   Lock,
   Info,
+  UploadCloud,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -37,8 +40,30 @@ export const SubmitGrievancePage: React.FC = () => {
   const [location, setLocation] = useState<SelectedLocationData | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isAnonymous, setIsAnonymous] = useState(false);
-  const [imageUrl, setImageUrl] = useState('');
+  const [reporterName, setReporterName] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // File Upload State
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [uploadedImageKey, setUploadedImageKey] = useState<string | null>(null);
+  const [uploadedImageMetadata, setUploadedImageMetadata] = useState<{
+    filename?: string;
+    size?: number;
+    mimeType?: string;
+    originalName?: string;
+  } | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Initialize reporter name from authenticated user session if real name exists
+  useEffect(() => {
+    if (user?.name && !user.name.startsWith('Citizen (') && user.name !== 'Citizen') {
+      setReporterName(user.name);
+    }
+  }, [user]);
 
   // Duplicate Check Modal State
   const [duplicateResult, setDuplicateResult] = useState<DuplicateDetectionResult | null>(null);
@@ -78,6 +103,70 @@ export const SubmitGrievancePage: React.FC = () => {
     setLocationError(null);
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadError(null);
+
+    // Client-side MIME validation: JPEG, PNG, WebP
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      setUploadError(`Invalid file format '${file.type || 'unknown'}'. Please select a JPEG, PNG, or WebP image.`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // Client-side file size validation (5MB max)
+    const maxSizeBytes = 5 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setUploadError(
+        `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the 5MB maximum limit. Please select a smaller photo.`
+      );
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setSelectedFile(file);
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
+    // Upload to real backend storage endpoint
+    setIsUploadingImage(true);
+    try {
+      const uploadResult = await grievanceService.uploadEvidence(file);
+      setUploadedImageUrl(uploadResult.url);
+      setUploadedImageKey(uploadResult.key || null);
+      setUploadedImageMetadata(uploadResult.metadata || null);
+      setUploadError(null);
+    } catch (err: unknown) {
+      console.error('Evidence upload failed:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to upload photo to server.';
+      setUploadError(msg);
+      // Prevent grievance from referencing nonexistent or failed upload
+      setUploadedImageUrl(null);
+      setUploadedImageKey(null);
+      setUploadedImageMetadata(null);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setUploadedImageUrl(null);
+    setUploadedImageKey(null);
+    setUploadedImageMetadata(null);
+    setUploadError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return; // Prevent duplicate submission
@@ -88,6 +177,18 @@ export const SubmitGrievancePage: React.FC = () => {
     if (!isAuthenticated || !user) {
       setSubmitError('Authentication required. Please sign in with your mobile OTP to file an official grievance.');
       navigate('/login/citizen', { state: { from: { pathname: '/submit' } } });
+      return;
+    }
+
+    // If an image is actively uploading, prompt user to wait
+    if (isUploadingImage) {
+      setSubmitError('Please wait for photo evidence upload to complete before submitting.');
+      return;
+    }
+
+    // If an image upload failed, prevent submission until fixed or removed
+    if (selectedFile && !uploadedImageUrl && uploadError) {
+      setSubmitError('Photo upload failed. Please replace or remove the selected photo before submitting.');
       return;
     }
 
@@ -167,7 +268,10 @@ export const SubmitGrievancePage: React.FC = () => {
         address: generatedAddress,
         landmark: landmark.trim() || undefined,
         wardId,
-        imageUrl: imageUrl.trim() || undefined,
+        imageUrl: uploadedImageUrl || undefined,
+        imageKey: uploadedImageKey || undefined,
+        imageMetadata: uploadedImageMetadata || undefined,
+        reporterName: !isAnonymous && reporterName.trim() ? reporterName.trim() : undefined,
         isAnonymous,
       };
 
@@ -199,6 +303,22 @@ export const SubmitGrievancePage: React.FC = () => {
       console.error('Failed to support existing:', err);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const resetForm = () => {
+    setSubmittedSuccess(false);
+    setTitle('');
+    setDescription('');
+    setAddress('');
+    setLandmark('');
+    handleRemovePhoto();
+    setLocation(null);
+    setWardId(null);
+    setCreatedTrackingNumber(null);
+    setSubmitError(null);
+    if (!user?.name || user.name.startsWith('Citizen (') || user.name === 'Citizen') {
+      setReporterName('');
     }
   };
 
@@ -248,18 +368,7 @@ export const SubmitGrievancePage: React.FC = () => {
             </Link>
 
             <button
-              onClick={() => {
-                setSubmittedSuccess(false);
-                setTitle('');
-                setDescription('');
-                setAddress('');
-                setLandmark('');
-                setImageUrl('');
-                setLocation(null);
-                setWardId(null);
-                setCreatedTrackingNumber(null);
-                setSubmitError(null);
-              }}
+              onClick={resetForm}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-navy-900 font-semibold text-xs transition-colors"
             >
               <RotateCcw className="w-4 h-4 text-gray-500" />
@@ -274,7 +383,7 @@ export const SubmitGrievancePage: React.FC = () => {
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs text-red-800 flex items-center gap-3 shadow-2xs">
               <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
               <div className="flex-1">
-                <span className="font-bold">Submission failed: </span>
+                <span className="font-bold">Submission notice: </span>
                 <span>{submitError}</span>
               </div>
             </div>
@@ -304,58 +413,125 @@ export const SubmitGrievancePage: React.FC = () => {
             </div>
           </Card>
 
-          {/* Photo Proof */}
+          {/* Photo Proof - Real Local File Upload */}
           <Card className="p-6 space-y-4">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-semibold text-navy-900">
                 2. Photographic Proof (Optional)
               </label>
               <span className="text-[11px] text-teal-700 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-full font-medium">
-                URL Supported
+                JPEG, PNG, WebP (Max 5MB)
               </span>
             </div>
 
-            <div className="space-y-3">
-              <div>
-                <label htmlFor="imageUrlInput" className="block text-xs font-medium text-navy-900 mb-1">
-                  Image Web URL
-                </label>
-                <div className="relative">
-                  <input
-                    id="imageUrlInput"
-                    type="url"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://example.com/incident-photo.jpg"
-                    className="w-full px-3 py-2 text-sm border border-civic-border rounded-lg focus:ring-2 focus:ring-navy-900 focus:outline-none bg-white font-mono text-xs"
-                  />
+            {/* Hidden native file input opening local file picker */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              id="evidenceFileInput"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {!selectedFile ? (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-gray-200 hover:border-teal-500 bg-gray-50/60 hover:bg-teal-50/30 rounded-xl p-6 text-center cursor-pointer transition-all group"
+              >
+                <div className="w-12 h-12 rounded-full bg-teal-100/80 text-teal-600 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                  <UploadCloud className="w-6 h-6" />
                 </div>
-              </div>
-
-              <div className="p-3 rounded-lg bg-gray-50 border border-civic-border text-xs text-civic-secondary flex items-start gap-2">
-                <Info className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  <strong>Notice:</strong> Server-side binary file upload storage is not configured in this release.
-                  To attach photo evidence, provide a publicly accessible image web URL (PNG, JPG, WebP) above.
+                <div className="text-xs font-semibold text-navy-900 group-hover:text-teal-700">
+                  Click to choose photographic evidence from your device
+                </div>
+                <p className="text-[11px] text-civic-secondary mt-1">
+                  Supports JPEG, PNG, or WebP up to 5MB. Photo will be uploaded to municipal storage.
                 </p>
+                <button
+                  type="button"
+                  className="mt-3 px-3.5 py-1.5 text-xs font-semibold text-teal-700 bg-white border border-teal-200 rounded-lg shadow-2xs group-hover:bg-teal-600 group-hover:text-white transition-colors"
+                >
+                  Browse Device
+                </button>
               </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-4 rounded-xl border border-gray-200 bg-white shadow-2xs flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                  {/* Thumbnail Preview */}
+                  {previewUrl && (
+                    <div className="w-24 h-20 rounded-lg overflow-hidden border border-gray-200 shrink-0 bg-gray-100 relative group">
+                      <img
+                        src={previewUrl}
+                        alt="Evidence Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
 
-              {imageUrl.trim() && (
-                <div className="w-full sm:w-64 h-36 rounded-lg overflow-hidden border border-civic-border relative group bg-gray-100">
-                  <img
-                    src={imageUrl.trim()}
-                    alt="Image Preview"
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[11px] font-medium">
-                    Attached Photo Preview
+                  {/* File Information & Upload Status */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-navy-900 truncate">
+                        {selectedFile.name}
+                      </span>
+                      <span className="text-[11px] text-gray-500 font-mono">
+                        ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
+                      </span>
+                    </div>
+
+                    {isUploadingImage ? (
+                      <div className="flex items-center gap-2 text-xs text-teal-700 font-medium">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-600" />
+                        <span>Uploading to storage provider...</span>
+                      </div>
+                    ) : uploadedImageUrl ? (
+                      <div className="flex items-center gap-1.5 text-[11px] text-teal-700 font-semibold">
+                        <CheckCircle className="w-3.5 h-3.5 text-teal-600" />
+                        <span>Uploaded successfully & attached to grievance</span>
+                      </div>
+                    ) : uploadError ? (
+                      <div className="flex items-center gap-1.5 text-[11px] text-red-600 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                        <span>Upload failed: {uploadError}</span>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Controls to replace or remove */}
+                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingImage}
+                      className="px-3 py-1.5 text-xs font-semibold text-gray-700 hover:text-navy-900 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-gray-500" />
+                      <span>Replace</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemovePhoto}
+                      disabled={isUploadingImage}
+                      className="px-3 py-1.5 text-xs font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors flex items-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                      <span>Remove</span>
+                    </button>
                   </div>
                 </div>
-              )}
-            </div>
+
+                {uploadError && (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold">Upload notice: </span>
+                      {uploadError}. Please replace with a valid JPEG, PNG, or WebP photo under 5MB or remove this file.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
 
           {/* Location Selection with GPS and Interactive Map */}
@@ -423,9 +599,10 @@ export const SubmitGrievancePage: React.FC = () => {
               <label className="block text-sm font-semibold text-navy-900">
                 5. Citizen Contact & Privacy
               </label>
-              <label className="inline-flex items-center gap-2 text-xs text-navy-900 cursor-pointer">
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-navy-900 cursor-pointer">
                 <input
                   type="checkbox"
+                  id="anonymousCheckbox"
                   checked={isAnonymous}
                   onChange={(e) => setIsAnonymous(e.target.checked)}
                   className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
@@ -435,26 +612,59 @@ export const SubmitGrievancePage: React.FC = () => {
             </div>
 
             {user ? (
-              <div className="bg-gray-50/70 rounded-xl p-4 border border-civic-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-navy-900">
-                      {isAnonymous ? 'Anonymous Citizen' : user.name || 'Citizen'}
-                    </span>
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
-                      <UserCheck className="w-3 h-3 text-teal-600" />
-                      Verified Citizen Session
-                    </span>
+              <div className="space-y-4">
+                <div className="bg-gray-50/70 rounded-xl p-4 border border-civic-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-navy-900">
+                        {isAnonymous ? 'Anonymous Citizen' : (reporterName.trim() || user.name || 'Citizen')}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
+                        <UserCheck className="w-3 h-3 text-teal-600" />
+                        Verified Citizen Session
+                      </span>
+                    </div>
+                    <p className="text-xs text-civic-secondary">
+                      {isAnonymous
+                        ? 'Anonymous reporting hides your identity and display name from public records and the civic map. Municipal authorities and field engineers retain administrative records to process and resolve the issue.'
+                        : 'Official status updates and notifications are linked to your verified session.'}
+                    </p>
                   </div>
-                  <p className="text-xs text-civic-secondary">
-                    {isAnonymous
-                      ? 'Your personal identity is masked on public listings and visible only to assigned municipal engineers.'
-                      : `SMS notifications and status updates will be routed to ${user.phone || user.phoneNumber}.`}
-                  </p>
+
+                  {/* Read-only authenticated phone number from session */}
+                  <div className="text-xs font-mono font-semibold text-navy-900 bg-white px-3 py-1.5 rounded-lg border border-gray-200 self-start sm:self-auto flex items-center gap-1.5 shadow-2xs">
+                    <span className="text-gray-400 font-sans text-[11px]">Phone:</span>
+                    <span>{user.phone || user.phoneNumber}</span>
+                  </div>
                 </div>
-                <div className="text-xs font-mono font-semibold text-navy-900 bg-white px-3 py-1.5 rounded-lg border border-gray-200 self-start sm:self-auto">
-                  {user.phone || user.phoneNumber}
-                </div>
+
+                {/* Optional Display Name Input (Hidden when reporting anonymously) */}
+                {!isAnonymous ? (
+                  <div>
+                    <label htmlFor="reporterNameInput" className="block text-xs font-medium text-navy-900 mb-1">
+                      Citizen Display Name (Optional)
+                    </label>
+                    <input
+                      id="reporterNameInput"
+                      type="text"
+                      value={reporterName}
+                      onChange={(e) => setReporterName(e.target.value)}
+                      placeholder="Enter your name (e.g. Sunil Kumar) or leave blank"
+                      className="w-full px-3 py-2 text-sm border border-civic-border rounded-lg focus:ring-2 focus:ring-navy-900 focus:outline-none bg-white"
+                      maxLength={100}
+                    />
+                    <p className="text-[11px] text-civic-secondary mt-1">
+                      Optional: You can provide your real name to appear on municipal records, or leave it blank.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-teal-50/50 border border-teal-200 text-xs text-teal-900 flex items-start gap-2">
+                    <Info className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">
+                      <strong>Privacy Mode Active:</strong> Your display name is hidden and will not be displayed on the public map or public grievance listings.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="bg-amber-50 rounded-xl p-4 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
@@ -487,8 +697,8 @@ export const SubmitGrievancePage: React.FC = () => {
               type="submit"
               variant="accent"
               size="lg"
-              isLoading={isSubmitting}
-              disabled={isSubmitting || !title.trim() || !description.trim() || !location || wardId === null}
+              isLoading={isSubmitting || isUploadingImage}
+              disabled={isSubmitting || isUploadingImage || !title.trim() || !description.trim() || !location || wardId === null}
             >
               Submit Grievance to JMC
             </Button>

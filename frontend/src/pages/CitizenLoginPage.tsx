@@ -11,13 +11,9 @@ import {
   CheckCircle2,
   Edit2,
   Terminal,
-  User,
-  Building,
-  Info,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { isValidIndianMobile, extractTenDigitMobile } from '../services/authService';
-import { JAMMU_WARDS } from '../data/jammuWards';
 
 type AuthStep = 'PHONE' | 'OTP';
 
@@ -29,15 +25,10 @@ export const CitizenLoginPage: React.FC = () => {
   // Current step in authentication flow
   const [step, setStep] = useState<AuthStep>('PHONE');
 
-  // Input fields
+  // Input fields (phone and OTP only)
   const [countryCode] = useState('+91');
   const [mobileNumber, setMobileNumber] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [wardNumber, setWardNumber] = useState<number | ''>('');
   const [otp, setOtp] = useState('');
-
-  // Expandable profile fields in Step A
-  const [showOptionalProfile, setShowOptionalProfile] = useState(false);
 
   // Flow & Submission States
   const [isRequestingOtp, setIsRequestingOtp] = useState(false);
@@ -120,10 +111,10 @@ export const CitizenLoginPage: React.FC = () => {
         response.message || 'A 6-digit verification code has been generated.'
       );
     } catch (err: unknown) {
-      const error = err as Error & { details?: { retryAfter?: number } };
+      const error = err as Error & { details?: { retryAfter?: number; reason?: string } };
       setErrorMessage(error.message || 'Failed to request verification code. Please try again.');
-      if (error.details?.retryAfter) {
-        setCooldown(error.details.retryAfter);
+      if (error.details?.reason === 'COOLDOWN_ACTIVE' && error.details?.retryAfter) {
+        setCooldown(Math.min(error.details.retryAfter, 60));
       }
     } finally {
       setIsRequestingOtp(false);
@@ -143,10 +134,10 @@ export const CitizenLoginPage: React.FC = () => {
       setStatusMessage(response.message || 'A new verification code has been generated.');
       otpInputRef.current?.focus();
     } catch (err: unknown) {
-      const error = err as Error & { details?: { retryAfter?: number } };
+      const error = err as Error & { details?: { retryAfter?: number; reason?: string } };
       setErrorMessage(error.message || 'Failed to resend code.');
-      if (error.details?.retryAfter) {
-        setCooldown(error.details.retryAfter);
+      if (error.details?.reason === 'COOLDOWN_ACTIVE' && error.details?.retryAfter) {
+        setCooldown(Math.min(error.details.retryAfter, 60));
       }
     } finally {
       setIsRequestingOtp(false);
@@ -168,12 +159,7 @@ export const CitizenLoginPage: React.FC = () => {
 
     setIsVerifyingOtp(true);
     try {
-      await verifyCitizenOtp(
-        cleanPhone,
-        cleanCode,
-        fullName.trim() || undefined,
-        typeof wardNumber === 'number' ? wardNumber : undefined
-      );
+      await verifyCitizenOtp(cleanPhone, cleanCode);
 
       // Navigate to destination from location state or default to citizen portal dashboard
       const targetDestination =
@@ -356,79 +342,6 @@ export const CitizenLoginPage: React.FC = () => {
                 )}
               </div>
 
-              {/* Collapsible Optional Citizen Details */}
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowOptionalProfile(!showOptionalProfile)}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700 hover:text-teal-800 transition-colors py-1 focus:outline-none"
-                >
-                  <Info className="w-3.5 h-3.5 text-teal-600" />
-                  <span>
-                    {showOptionalProfile
-                      ? 'Hide Optional Profile Info'
-                      : 'Add Name & Ward Number (Optional)'}
-                  </span>
-                </button>
-
-                {showOptionalProfile && (
-                  <div className="mt-3 p-3.5 rounded-xl bg-gray-50 border border-civic-border space-y-3 animate-fadeIn">
-                    {/* Full Name */}
-                    <div>
-                      <label
-                        htmlFor="citizenFullName"
-                        className="block text-[11px] font-semibold text-navy-900 uppercase tracking-wider mb-1"
-                      >
-                        Full Name (Optional)
-                      </label>
-                      <div className="relative rounded-lg shadow-2xs">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-civic-secondary">
-                          <User className="h-3.5 w-3.5" />
-                        </div>
-                        <input
-                          id="citizenFullName"
-                          type="text"
-                          maxLength={100}
-                          value={fullName}
-                          onChange={(e) => setFullName(e.target.value)}
-                          placeholder="e.g. Sunil Kumar"
-                          className="block w-full pl-9 pr-3 py-2 text-xs bg-white border border-civic-border rounded-lg text-navy-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Ward Number */}
-                    <div>
-                      <label
-                        htmlFor="citizenWard"
-                        className="block text-[11px] font-semibold text-navy-900 uppercase tracking-wider mb-1"
-                      >
-                        Jammu Ward (1–75, Optional)
-                      </label>
-                      <div className="relative rounded-lg shadow-2xs">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-civic-secondary">
-                          <Building className="h-3.5 w-3.5" />
-                        </div>
-                        <select
-                          id="citizenWard"
-                          value={wardNumber}
-                          onChange={(e) =>
-                            setWardNumber(e.target.value ? Number(e.target.value) : '')
-                          }
-                          className="block w-full pl-9 pr-3 py-2 text-xs bg-white border border-civic-border rounded-lg text-navy-900 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
-                        >
-                          <option value="">Select Jammu Ward (Optional)</option>
-                          {JAMMU_WARDS.map((w) => (
-                            <option key={w.number} value={w.number}>
-                              Ward {w.number}: {w.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* Submit Button */}
               <div className="pt-2">

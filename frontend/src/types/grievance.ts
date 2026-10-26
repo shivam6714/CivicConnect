@@ -73,6 +73,13 @@ export interface Grievance {
   landmark?: string;
   ward: JammuWard;
   imageUrl?: string;
+  imageKey?: string;
+  imageMetadata?: {
+    filename?: string;
+    size?: number;
+    mimeType?: string;
+    originalName?: string;
+  };
   reporterName?: string;
   reporterPhone?: string;
   isAnonymous: boolean;
@@ -111,6 +118,13 @@ export interface CreateGrievanceDTO {
   wardId: number;
   imageFile?: File;
   imageUrl?: string;
+  imageKey?: string;
+  imageMetadata?: {
+    filename?: string;
+    size?: number;
+    mimeType?: string;
+    originalName?: string;
+  };
   reporterName?: string;
   reporterPhone?: string;
   isAnonymous?: boolean;

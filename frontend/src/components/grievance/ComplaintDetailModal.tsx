@@ -10,10 +10,12 @@ import {
   Layers,
   Tag,
   AlertCircle,
+  ImageOff,
 } from 'lucide-react';
 import { Grievance, GrievanceStatus } from '../../types/grievance';
 import { useAuth } from '../../context/AuthContext';
 import { grievanceService } from '../../services/grievanceService';
+import { getAccessibleImageUrl } from '../../utils/imageUtils';
 
 interface ComplaintDetailModalProps {
   grievance: Grievance | null;
@@ -36,10 +38,16 @@ export const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateSuccess, setUpdateSuccess] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [imageError, setImageError] = useState(false);
+
+  React.useEffect(() => {
+    setImageError(false);
+  }, [grievance?.id]);
 
   if (!isOpen || !grievance) return null;
 
   const currentGrievance = grievance;
+  const accessibleUrl = getAccessibleImageUrl(currentGrievance.imageUrl);
 
   const handleStatusChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,21 +218,34 @@ export const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
           </div>
 
           {/* Incident Photograph */}
-          {currentGrievance.imageUrl && (
-            <div>
-              <h3 className="text-xs font-bold text-navy-900 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Camera className="w-4 h-4 text-teal-600" />
-                Submitted Incident Photograph
-              </h3>
+          <div>
+            <h3 className="text-xs font-bold text-navy-900 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Camera className="w-4 h-4 text-teal-600" />
+              Submitted Incident Photograph
+            </h3>
+            {accessibleUrl && !imageError ? (
               <div className="rounded-xl overflow-hidden border border-civic-border max-h-64 bg-gray-100 flex items-center justify-center">
                 <img
-                  src={currentGrievance.imageUrl}
-                  alt={currentGrievance.title}
+                  src={accessibleUrl}
+                  alt={currentGrievance.title || 'Incident photograph'}
+                  onError={() => setImageError(true)}
                   className="w-full h-64 object-cover"
                 />
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-6 flex flex-col items-center justify-center text-center text-gray-500 space-y-2">
+                <div className="w-10 h-10 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-400">
+                  <ImageOff className="w-5 h-5" />
+                </div>
+                <p className="text-xs font-semibold text-gray-700">Photo Unavailable</p>
+                <p className="text-[11px] text-gray-400 max-w-xs leading-relaxed">
+                  {currentGrievance.imageUrl && currentGrievance.imageUrl !== 'undefined'
+                    ? 'The photographic evidence attached to this report could not be loaded from storage.'
+                    : 'No photographic evidence was attached to this grievance.'}
+                </p>
+              </div>
+            )}
+          </div>
 
           {/* RESOLUTION EVIDENCE SECTION */}
           {currentGrievance.status === 'RESOLVED' && currentGrievance.resolutionEvidence && (

@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import mongoose from 'mongoose';
+import { config } from '../../config/index.js';
 import {
   GrievanceModel,
   formatGrievance,
@@ -40,6 +43,7 @@ export class GrievanceService {
   /**
    * Persists a newly reported municipal grievance.
    * Derives citizen ownership strictly from the verified JWT identity.
+   * Prevents client-provided phone number or citizen ID from overriding authenticated identity.
    */
   async createGrievance(
     input: CreateGrievanceInput,
@@ -49,8 +53,53 @@ export class GrievanceService {
 
     // Fetch user details from database to obtain official profile name if available
     const dbUser = await UserModel.findById(citizenObjectId);
-    const reporterName = dbUser?.fullName || 'Citizen';
-    const reporterPhone = userPayload.phoneNumber;
+
+    // Determine citizen display name based on anonymous preference and user input.
+    // Ask for an optional name only when the citizen submits a grievance.
+    // Save the entered name with that grievance if provided. If omitted and user has no real name, leave it undefined.
+    // Do not overwrite a real existing name with a dummy fallback.
+    let reporterName: string | undefined = undefined;
+    if (!input.isAnonymous) {
+      if (input.reporterName && input.reporterName.trim().length > 0) {
+        reporterName = input.reporterName.trim();
+        // Update user profile in database if they previously had no full name
+        if (dbUser && (!dbUser.fullName || dbUser.fullName.trim().length === 0)) {
+          dbUser.fullName = reporterName;
+          await dbUser.save();
+        }
+      } else if (dbUser?.fullName && dbUser.fullName.trim().length > 0) {
+        reporterName = dbUser.fullName.trim();
+      }
+    }
+
+    const sanitizedImageUrl =
+      input.imageUrl && !input.imageUrl.startsWith('blob:') ? input.imageUrl : undefined;
+
+    // Phone number is strictly derived from the verified JWT session, never client-spoofed
+    const reporterPhone = input.isAnonymous ? undefined : userPayload.phoneNumber;
+
+    // Validate that referenced image actually exists if local storage is used
+    if (config.storage.provider === 'local') {
+      const rawKey = input.imageKey || (input.imageUrl?.startsWith('/uploads/') ? path.basename(input.imageUrl) : undefined);
+      if (rawKey) {
+        const baseUploadDir = path.resolve(process.cwd(), config.storage.localDir);
+        const safeFilename = path.basename(rawKey);
+        const filePath = path.resolve(baseUploadDir, safeFilename);
+
+        // Path traversal protection: Ensure target file stays strictly inside upload directory
+        if (!filePath.startsWith(baseUploadDir)) {
+          throw new BadRequestError('Invalid file path for evidence image.');
+        }
+
+        try {
+          await fs.promises.access(filePath);
+        } catch {
+          throw new BadRequestError(
+            `Referenced evidence image does not exist or upload failed: ${safeFilename}`
+          );
+        }
+      }
+    }
 
     const trackingNumber = await this.generateUniqueTrackingNumber();
     const assignedWard = getJammuWard(input.wardId);
@@ -61,12 +110,12 @@ export class GrievanceService {
       id: `tl-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       status: 'REPORTED' as const,
       timestamp: now,
-      actor: input.isAnonymous ? 'Citizen (Anonymous)' : reporterName,
+      actor: input.isAnonymous ? 'Citizen (Anonymous)' : reporterName || 'Citizen',
       note: 'Initial grievance submitted via CivicConnect Web',
     };
 
     const doc = await GrievanceModel.create({
-      citizenId: citizenObjectId,
+      citizenId: citizenObjectId, // strictly derived from userPayload.sub
       trackingNumber,
       title: input.title,
       description: input.description,
@@ -84,9 +133,11 @@ export class GrievanceService {
       address: input.address,
       landmark: input.landmark || undefined,
       ward: assignedWard,
-      imageUrl: input.imageUrl || undefined,
+      imageUrl: sanitizedImageUrl || undefined,
+      imageKey: input.imageKey || undefined,
+      imageMetadata: input.imageMetadata || undefined,
       reporterName: input.isAnonymous ? undefined : reporterName,
-      reporterPhone: input.isAnonymous ? undefined : reporterPhone,
+      reporterPhone,
       isAnonymous: input.isAnonymous ?? false,
       supportCount: 1,
       supportedBy: [citizenObjectId],

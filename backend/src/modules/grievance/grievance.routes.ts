@@ -8,8 +8,13 @@ import {
   getGrievanceByIdController,
   updateGrievanceStatusController,
 } from './grievance.controller.js';
+import { uploadEvidenceMiddleware } from '../../middlewares/upload.middleware.js';
+import { uploadEvidenceController } from '../../controllers/upload.controller.js';
 
 export const grievanceRouter = Router();
+
+// POST /api/complaints/upload - Upload evidence photo (Citizen / Auth)
+grievanceRouter.post('/upload', authenticate, uploadEvidenceMiddleware, uploadEvidenceController);
 
 // POST /api/complaints - Submit new grievance (Citizen)
 grievanceRouter.post('/', authenticate, createGrievanceController);

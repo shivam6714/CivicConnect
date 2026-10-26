@@ -94,17 +94,29 @@ export function mapBackendCitizenToUser(citizenUser: BackendCitizenUser): User {
       ? 'City Administrator'
       : citizenUser.role === 'official'
       ? 'Municipal Officer'
-      : `Citizen (${citizenUser.phoneNumber})`;
+      : undefined;
+
+  const realName =
+    citizenUser.fullName && citizenUser.fullName.trim() !== ''
+      ? citizenUser.fullName.trim()
+      : defaultName;
+
+  const validWard =
+    typeof citizenUser.wardNumber === 'number' &&
+    citizenUser.wardNumber >= 1 &&
+    citizenUser.wardNumber <= 75
+      ? citizenUser.wardNumber
+      : undefined;
 
   return {
     id: citizenUser.id,
-    name: citizenUser.fullName?.trim() || defaultName,
+    name: realName,
     email: `${citizenUser.phoneNumber.replace('+', '')}@citizen.civicconnect.in`,
     phone: citizenUser.phoneNumber,
     phoneNumber: citizenUser.phoneNumber,
     role,
-    wardAssigned: citizenUser.wardNumber,
-    wardNumber: citizenUser.wardNumber,
+    wardAssigned: validWard,
+    wardNumber: validWard,
     isPhoneVerified: citizenUser.isPhoneVerified,
   };
 }

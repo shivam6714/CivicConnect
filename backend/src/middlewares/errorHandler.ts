@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
+import multer from 'multer';
 import { AppError } from '../errors/appError.js';
 import { config } from '../config/index.js';
 
@@ -18,6 +19,23 @@ export const errorHandler: ErrorRequestHandler = (
         message: err.message,
         statusCode: err.statusCode,
         details: err.details,
+      },
+    });
+    return;
+  }
+
+  // Handle Multer upload errors
+  if (err instanceof multer.MulterError) {
+    let msg = err.message;
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      msg = `File size exceeds allowed limit (${Math.round(config.storage.maxFileSizeBytes / (1024 * 1024))}MB).`;
+    }
+    res.status(400).json({
+      success: false,
+      error: {
+        message: msg,
+        statusCode: 400,
+        code: err.code,
       },
     });
     return;

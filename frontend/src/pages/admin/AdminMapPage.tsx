@@ -11,6 +11,7 @@ import { Grievance, Coordinates, GrievanceStatus } from '../../types/grievance';
 import { JAMMU_MAP_CENTER, JAMMU_WARDS } from '../../data/jammuWards';
 import { InteractiveMap } from '../../components/map/InteractiveMap';
 import { ComplaintDetailModal } from '../../components/grievance/ComplaintDetailModal';
+import { getAccessibleImageUrl } from '../../utils/imageUtils';
 
 export const AdminMapPage: React.FC = () => {
   const [allGrievances, setAllGrievances] = useState<Grievance[]>([]);
@@ -276,15 +277,22 @@ export const AdminMapPage: React.FC = () => {
               </div>
 
               {/* Photo preview if present */}
-              {selectedGrievance.imageUrl && (
-                <div className="rounded-lg overflow-hidden border border-gray-200 h-32 bg-gray-100">
-                  <img
-                    src={selectedGrievance.imageUrl}
-                    alt={selectedGrievance.title}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
+              {(() => {
+                const safeImgUrl = getAccessibleImageUrl(selectedGrievance.imageUrl);
+                if (!safeImgUrl) return null;
+                return (
+                  <div className="rounded-lg overflow-hidden border border-gray-200 h-32 bg-gray-100">
+                    <img
+                      src={safeImgUrl}
+                      alt={selectedGrievance.title}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="pt-3 border-t border-gray-100">

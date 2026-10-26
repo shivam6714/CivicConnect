@@ -8,6 +8,7 @@ import {
 } from '../types/grievance';
 import { FilterOptions } from '../types/common';
 import { apiClient } from './apiClient';
+import { authService } from './authService';
 import { MOCK_GRIEVANCES } from '../data/mockGrievances';
 
 const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA !== 'false';
@@ -161,6 +162,63 @@ export const grievanceService = {
   },
 
   /**
+   * Upload photographic evidence via real backend POST /api/upload.
+   * Performs client-side MIME validation and file size check (5MB).
+   */
+  async uploadEvidence(file: File): Promise<{
+    url: string;
+    key?: string;
+    metadata?: {
+      filename?: string;
+      size?: number;
+      mimeType?: string;
+      originalName?: string;
+    };
+  }> {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      throw new Error(`Invalid file format '${file.type || 'unknown'}'. Only JPEG, PNG, and WebP images are supported.`);
+    }
+
+    const maxSizeBytes = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSizeBytes) {
+      throw new Error(`File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the maximum allowed limit of 5MB.`);
+    }
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const token = authService.getToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      const errorMsg = data?.error?.message || data?.message || 'Failed to upload photographic evidence.';
+      throw new Error(errorMsg);
+    }
+
+    return {
+      url: data.url || data.file?.url,
+      key: data.key || data.file?.key,
+      metadata: data.metadata || {
+        filename: data.file?.filename,
+        size: data.file?.size,
+        mimeType: data.file?.mimetype,
+        originalName: file.name,
+      },
+    };
+  },
+
+  /**
    * Create a new grievance via real backend POST /api/complaints.
    * Derives ownership strictly from the authenticated JWT session.
    */
@@ -177,6 +235,9 @@ export const grievanceService = {
       landmark: dto.landmark?.trim() || undefined,
       wardId: dto.wardId,
       imageUrl: dto.imageUrl || undefined,
+      imageKey: dto.imageKey || undefined,
+      imageMetadata: dto.imageMetadata || undefined,
+      reporterName: dto.reporterName?.trim() || undefined,
       isAnonymous: dto.isAnonymous ?? false,
     };
 

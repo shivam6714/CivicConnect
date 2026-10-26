@@ -4,6 +4,7 @@ import { Card } from '../common/Card';
 import { Button } from '../common/Button';
 import { StatusBadge, PriorityBadge, CategoryBadge } from './GrievanceStatusBadge';
 import { ThumbsUp, MapPin, Calendar, Building2, Sparkles } from 'lucide-react';
+import { getAccessibleImageUrl } from '../../utils/imageUtils';
 
 interface GrievanceCardProps {
   grievance: Grievance;
@@ -57,22 +58,29 @@ export const GrievanceCard: React.FC<GrievanceCardProps> = ({
         </p>
 
         {/* Photo thumbnail if available */}
-        {grievance.imageUrl && (
-          <div className="mt-3 relative rounded-lg overflow-hidden h-36 bg-gray-100 border border-civic-border">
-            <img
-              src={grievance.imageUrl}
-              alt={grievance.title}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-            {grievance.aiTriageMetadata && (
-              <div className="absolute bottom-2 left-2 bg-navy-950/80 backdrop-blur-sm text-white text-[11px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-teal-400" />
-                AI Confidence {(grievance.aiTriageMetadata.confidence * 100).toFixed(0)}%
-              </div>
-            )}
-          </div>
-        )}
+        {(() => {
+          const cardImageUrl = getAccessibleImageUrl(grievance.imageUrl);
+          if (!cardImageUrl) return null;
+          return (
+            <div className="mt-3 relative rounded-lg overflow-hidden h-36 bg-gray-100 border border-civic-border">
+              <img
+                src={cardImageUrl}
+                alt={grievance.title}
+                className="w-full h-full object-cover"
+                loading="lazy"
+                onError={(e) => {
+                  (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                }}
+              />
+              {grievance.aiTriageMetadata && (
+                <div className="absolute bottom-2 left-2 bg-navy-950/80 backdrop-blur-sm text-white text-[11px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-teal-400" />
+                  AI Confidence {(grievance.aiTriageMetadata.confidence * 100).toFixed(0)}%
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Location & Ward metadata */}
         <div className="mt-3 pt-3 border-t border-civic-border/70 flex flex-col gap-1.5 text-xs text-civic-secondary">

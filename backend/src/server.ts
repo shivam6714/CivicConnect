@@ -11,15 +11,33 @@ async function startServer(): Promise<void> {
     // Validate configuration
     validateConfig();
 
-    // Connect to database if database mode is enabled
+    // Connect to database if database mode is enabled (with retries for transient socket resets)
     if (config.enableDb) {
       console.log(`[Database] Connecting to MongoDB at ${config.mongoUri.replace(/\/\/.*@/, '//***@')}...`);
-      await connectDB();
-      console.log('[Database] MongoDB connection established.');
+      let connected = false;
+      let lastError: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await connectDB();
+          await initAuthIndexes();
+          connected = true;
+          break;
+        } catch (dbErr) {
+          lastError = dbErr;
+          console.warn(
+            `[Database] Connection attempt ${attempt}/3 encountered transient error: ${
+              (dbErr as Error)?.message || dbErr
+            }. Retrying in 1.5s...`
+          );
+          await disconnectDB().catch(() => {});
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
 
-      // Initialize and verify critical MongoDB indexes
-      await initAuthIndexes();
-      console.log('[Database] Critical indexes verified and ensured.');
+      if (!connected) {
+        throw lastError;
+      }
+      console.log('[Database] MongoDB connection established and critical indexes verified.');
     } else {
 
       console.log('[Database] Database mode is disabled (ENABLE_DB=false). Running in standalone mode.');

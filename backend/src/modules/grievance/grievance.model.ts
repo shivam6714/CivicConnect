@@ -39,6 +39,13 @@ export interface IGrievanceDocument extends Document {
   landmark?: string;
   ward: BackendJammuWard;
   imageUrl?: string;
+  imageKey?: string;
+  imageMetadata?: {
+    filename?: string;
+    size?: number;
+    mimeType?: string;
+    originalName?: string;
+  };
   reporterName?: string;
   reporterPhone?: string;
   isAnonymous: boolean;
@@ -137,6 +144,22 @@ const grievanceSchema = new Schema<IGrievanceDocument>(
     },
     imageUrl: {
       type: String,
+      validate: {
+        validator: function (val: string) {
+          return !val || !val.startsWith('blob:');
+        },
+        message: 'blob: URLs cannot be persisted to the database as evidence images.',
+      },
+    },
+    imageKey: {
+      type: String,
+      trim: true,
+    },
+    imageMetadata: {
+      filename: { type: String },
+      size: { type: Number },
+      mimeType: { type: String },
+      originalName: { type: String },
     },
     reporterName: {
       type: String,
@@ -213,7 +236,9 @@ export function formatGrievance(
     address: doc.address,
     landmark: doc.landmark || undefined,
     ward: doc.ward || getJammuWard(1),
-    imageUrl: doc.imageUrl || undefined,
+    imageUrl: doc.imageUrl && !doc.imageUrl.startsWith('blob:') ? doc.imageUrl : undefined,
+    imageKey: doc.imageKey || undefined,
+    imageMetadata: doc.imageMetadata || undefined,
     reporterName: doc.isAnonymous ? undefined : doc.reporterName || undefined,
     reporterPhone: doc.isAnonymous ? undefined : doc.reporterPhone || undefined,
     isAnonymous: doc.isAnonymous,

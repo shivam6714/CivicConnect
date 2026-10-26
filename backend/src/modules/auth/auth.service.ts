@@ -11,7 +11,7 @@ import {
 import { UserModel, formatCitizenUser } from './user.model.js';
 import { generateAuthToken } from './jwt.utils.js';
 import type { RequestOtpResponse, VerifyOtpInput, VerifyOtpResponse } from './auth.types.js';
-import { getOtpProvider } from '../../providers/otp/index.js';
+import { getOtpProvider, MockOtpProvider } from '../../providers/otp/index.js';
 import { config } from '../../config/index.js';
 import { isDbConnected } from '../../config/db.js';
 import {
@@ -73,8 +73,12 @@ export class AuthService {
     let createdOtpDoc: IOtpDocument | null = null;
 
     try {
-      // 4. Generate cryptographically secure random six-digit OTP
-      const plainOtp = generateSecureOtp();
+      // 4. Resolve delivery provider and generate OTP (cryptographic random in production)
+      const otpProvider = getOtpProvider();
+      let plainOtp = generateSecureOtp();
+      if (otpProvider instanceof MockOtpProvider && otpProvider.getPredictableOtpForTest()) {
+        plainOtp = otpProvider.getPredictableOtpForTest()!;
+      }
 
       // 5. Compute cryptographic peppered, salted hash (never store plaintext OTP)
       const hashedOtp = hashOtp(plainOtp);
@@ -104,7 +108,6 @@ export class AuthService {
       });
 
       // 9. Dispatch OTP via the configured provider
-      const otpProvider = getOtpProvider();
       let sendResult;
       try {
         sendResult = await otpProvider.sendOtp({

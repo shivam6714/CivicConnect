@@ -64,6 +64,16 @@ export const createGrievanceSchema = z.object({
     .min(1, 'Ward number must be between 1 and 75')
     .max(75, 'Jammu Municipal Corporation consists of 75 wards'),
   imageUrl: z.string().trim().optional(),
+  imageKey: z.string().trim().optional(),
+  imageMetadata: z
+    .object({
+      filename: z.string().optional(),
+      size: z.number().optional(),
+      mimeType: z.string().optional(),
+      originalName: z.string().optional(),
+    })
+    .optional(),
+  reporterName: z.string().trim().max(100).optional(),
   isAnonymous: z.boolean().optional().default(false),
 });
 
@@ -110,6 +120,13 @@ export interface FormattedGrievance {
   landmark?: string;
   ward: BackendJammuWard;
   imageUrl?: string;
+  imageKey?: string;
+  imageMetadata?: {
+    filename?: string;
+    size?: number;
+    mimeType?: string;
+    originalName?: string;
+  };
   reporterName?: string;
   reporterPhone?: string;
   isAnonymous: boolean;

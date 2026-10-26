@@ -7,6 +7,7 @@ import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { StatusBadge, PriorityBadge, CategoryBadge } from '../components/grievance/GrievanceStatusBadge';
 import { MapPin, ThumbsUp, Calendar, X, Compass, RefreshCw, AlertTriangle } from 'lucide-react';
+import { getAccessibleImageUrl } from '../utils/imageUtils';
 
 export const MapViewPage: React.FC = () => {
   const [grievances, setGrievances] = useState<Grievance[]>([]);
@@ -240,15 +241,22 @@ export const MapViewPage: React.FC = () => {
                   {selectedGrievance.description}
                 </p>
 
-                {selectedGrievance.imageUrl && (
-                  <div className="h-40 rounded-lg overflow-hidden border border-civic-border">
-                    <img
-                      src={selectedGrievance.imageUrl}
-                      alt={selectedGrievance.title}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                )}
+                {(() => {
+                  const safeImgUrl = getAccessibleImageUrl(selectedGrievance.imageUrl);
+                  if (!safeImgUrl) return null;
+                  return (
+                    <div className="h-40 rounded-lg overflow-hidden border border-civic-border">
+                      <img
+                        src={safeImgUrl}
+                        alt={selectedGrievance.title}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  );
+                })()}
 
                 <div className="space-y-1.5 text-xs text-civic-secondary pt-2 border-t border-civic-border">
                   <div className="flex items-center gap-1.5">

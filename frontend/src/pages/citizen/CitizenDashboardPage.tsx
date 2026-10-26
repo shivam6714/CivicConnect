@@ -116,15 +116,15 @@ export const CitizenDashboardPage: React.FC = () => {
                 {user.phone}
               </span>
             )}
-            {(user?.wardAssigned || user?.wardNumber) && (
+            {user?.wardNumber && user.wardNumber >= 1 && user.wardNumber <= 75 ? (
               <span className="text-[11px] text-teal-800 font-semibold bg-teal-50 border border-teal-200 px-2 py-0.5 rounded">
-                Ward {user.wardAssigned || user.wardNumber}
+                Ward {user.wardNumber}
               </span>
-            )}
+            ) : null}
             <span className="text-xs text-gray-400 font-mono hidden sm:inline">Jammu Municipal Corporation</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-navy-900">
-            Welcome, {user?.name || 'Citizen'}
+            Welcome to CivicConnect
           </h1>
           <p className="text-xs text-civic-secondary max-w-xl">
             Track your submitted municipal grievances, view official photographic resolution evidence, and report new issues in your ward.
